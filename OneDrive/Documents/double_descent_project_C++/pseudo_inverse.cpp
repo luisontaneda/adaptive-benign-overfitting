@@ -36,7 +36,9 @@ MatrixXld pinv(const MatrixRowMajor &A, double tolerance = 1e-16)
     Eigen::MatrixXd S_inv(int_m, int_n);
     S_inv.setZero();
 
-    for (lapack_int i = 0; i < m; i++)
+    // std::cout << S_inv << std::endl;
+
+    for (lapack_int i = 0; i < std::min(m, n); i++)
     {
         if (s[i] > tolerance)
         {

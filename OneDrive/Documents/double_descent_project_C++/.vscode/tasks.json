@@ -6,6 +6,8 @@
       "command": "/usr/bin/g++-11",
       "args": [
         "-fdiagnostics-color=always",
+        "QR_RLS.cpp",
+        "gau_rff.cpp",
         "-g",
         "${file}",
         "-o",
@@ -14,7 +16,8 @@
         "-L${workspaceFolder}/libs/lapack", // LAPACK library path
         "-llapacke", // Link LAPACKE
         "-llapack", // Link LAPACK
-        "-lblas"
+        "-lblas",
+        "-lm"
       ],
       "options": {
         "cwd": "${fileDirname}"

@@ -11,23 +11,23 @@ using namespace std;
 class QR_Rls
 {
 public:
-    typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> MatrixXld;
-    typedef Eigen::Matrix<double, Eigen::Dynamic, 1> VectorXld;
-    typedef Eigen::Matrix<double, 1, Eigen::Dynamic> RowVectorXld;
+    typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> MatrixXd;
+    typedef Eigen::Matrix<double, Eigen::Dynamic, 1> VectorXd;
+    typedef Eigen::Matrix<double, 1, Eigen::Dynamic> RowVectorXd;
 
-    MatrixXld X, I, B, Q, R, R_inv, A, P, all_Q;
-    VectorXld y, w, z;
+    MatrixXd X, I, B, Q, R, R_inv, A, P, all_Q;
+    VectorXd y, w, z;
     int max_obs, dim, n_batch, i;
     double ff, l, b;
 
-    QR_Rls(const MatrixXld &x, const VectorXld &y, int max_obs, double ff, double lambda);
+    QR_Rls(const MatrixXd &x, const VectorXd &y, int max_obs, double ff, double lambda);
 
     // Update method
-    void update(MatrixXld new_x, const MatrixXld &y);
+    void update(MatrixXd new_x, const MatrixXd &y);
 
     void downdate();
 
-    double pred(const MatrixXld &x);
+    double pred(const MatrixXd &x);
 };
 
 #endif // QR_RLS_H  // End of the include guard

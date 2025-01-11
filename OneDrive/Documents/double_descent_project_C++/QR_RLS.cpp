@@ -26,17 +26,12 @@ QR_Rls::QR_Rls(const MatrixXd &x, const VectorXd &y, int max_obs, double ff, dou
     X = X * B;
 
     auto [Q, R] = Q_R_compute(X);
-    // Q_R_compute(X);
-
     R_inv = pinv(R);
     w = R_inv * Q.transpose() * y;
-
     z = Q.transpose() * y;
 
     // A and P were used as R and R inverse
     A = R;
-
-    cout << A.col(0) << endl;
     P = R_inv;
     max_obs = max_obs;
     this->all_Q = Q;
@@ -83,38 +78,15 @@ void QR_Rls::update(MatrixXd new_x, const MatrixXd &new_y)
     A.conservativeResize(A.rows() + 1, A.cols());
     A.row(A.rows() - 1) = new_x;
 
-    auto [Q, A] = givens_update(this); // Assuming givens is implemented
-
-    // cout << z << endl;
-
-    // this->w = P * z;
-    this->w = P * all_Q * y;
-
     auto [Q_test, R_test] = Q_R_compute(X);
 
-    cout << R_test.col(2) << endl;
+    auto [Q, A] = givens_update(this); // Assuming givens is implemented
 
-    cout << "je " << endl;
-
-    cout << A.col(2) << endl;
-    // Q_R_compute(X);
-
-    VectorXd w_test = pinv(R_test) * Q_test.transpose() * y;
-
-    cout << "real W" << w_test << endl;
-
-    cout << "fake W" << w << endl;
-
-    double mse_test = 0;
-
-    for (int i = 0; i < w.size(); i++)
-    {
-        mse_test = pow((w_test(i) - this->w(i)), 2);
-    }
+    w = P * z;
 
     // this->w = P * y;
     this->P = P * Q;
-    this->z = Q * z;
+    this->z = Q.transpose() * z;
     i++;
 
     if (nobs > max_obs)
@@ -139,8 +111,6 @@ void QR_Rls::downdate()
     P = P * Q;
     A = Q.transpose() * A;
 
-    // cout << A.col(0) << endl;
-
     RowVectorXd x_T = A.row(0);
     VectorXd c = MatrixXd::Zero(P.cols(), 1);
     c(0, 0) = 1.0;
@@ -151,7 +121,10 @@ void QR_Rls::downdate()
         MatrixXd k = P * c;
         MatrixXd h = x_T * P;
 
-        P = P - k * pinv(k) * P - P * pinv(h) * h + (pinv(k) * P * pinv(h))(0) * k * h;
+        MatrixXd k_inv = pinv(k);
+        MatrixXd h_inv = pinv(h);
+
+        P = P - k * k_inv * P - P * h_inv * h + (k_inv * P * h_inv)(0) * k * h;
     }
     // Deletion for old regime
     else
@@ -172,47 +145,20 @@ void QR_Rls::downdate()
         P = P + (1 / S) * P * h.transpose() * u.transpose() - (S / sigma_2) * p_2 * q_2;
     }
 
-    double tolerance = 1e-13;
+    Eigen::MatrixXd new_A = A.bottomRows(A.rows() - 1);
+    Eigen::MatrixXd new_all_Q_1 = all_Q.bottomRows(all_Q.rows() - 1);
+    Eigen::MatrixXd new_all_Q = new_all_Q_1.rightCols(all_Q.cols() - 1);
+    Eigen::MatrixXd new_y = y.bottomRows(y.rows() - 1);
+    Eigen::MatrixXd new_P = P.rightCols(P.cols() - 1);
 
-    // P = P.unaryExpr([&tolerance](double val)
-    //                 { return std::abs(val) < tolerance ? 0.0 : val; });
-
-    cout << P.col(0) << endl;
-
-    A = A.bottomRows(A.rows() - 1);
-
-    z = all_Q.transpose() * y;
-    // z = Q.transpose() * z;
-    P = P.rightCols(P.cols() - 1);
-    z = z.bottomRows(z.rows() - 1);
-    y = y.bottomRows(y.rows() - 1);
+    z = new_all_Q.transpose() * new_y;
     X = X.bottomRows(X.rows() - 1);
-    cout << "ya nuwvo" << endl;
-    cout << z << endl;
-    w = P * z;
+    w = new_P * z;
 
-    auto [Q_test, R_test] = Q_R_compute(X);
-    // Q_R_compute(X);
-
-    VectorXd w_test = pinv(R_test) * Q_test.transpose() * y;
-
-    cout << "real W" << w_test << endl;
-
-    cout << "fake W" << w << endl;
-
-    double mse_test = 0;
-
-    for (int i = 0; i < w.size(); i++)
-    {
-        mse_test = pow((w_test(i) - w(i)), 2);
-    }
-    mse_test = mse_test / w.size();
-
-    all_Q = all_Q.bottomRows(all_Q.rows() - 1);
-    all_Q = all_Q.rightCols(all_Q.cols() - 1);
-    // P = P.rightCols(P.cols() - 1);
-    // z = z.bottomRows(z.rows() - 1);
-    // y = y.bottomRows(y.rows() - 1);
+    all_Q = new_all_Q;
+    y = new_y;
+    A = new_A;
+    P = new_P;
 }
 
 double QR_Rls::pred(const MatrixXd &x)

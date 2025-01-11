@@ -55,7 +55,7 @@ int main()
 
     int start_row = 0;
     int start_col = 0;
-    int num_rows = 20;
+    int num_rows = 10;
     int num_cols = n_lags;
 
     int num_elements = close_price.size() - n_lags - num_rows;
@@ -83,7 +83,7 @@ int main()
     cout << X.rows() << " " << X.cols() << endl;
     // cout << X << endl;
 
-    int max_obs = 25;
+    int max_obs = 12;
     double ff = 1;
     double lambda = 0.1;
     QR_Rls qr_rls(X, y, max_obs, ff, lambda);

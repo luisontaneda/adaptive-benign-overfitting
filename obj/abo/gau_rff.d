@@ -185,7 +185,9 @@ obj/abo/gau_rff.o: src/abo/gau_rff.cpp /usr/include/eigen3/Eigen/Dense \
  /usr/include/eigen3/Eigen/src/Eigenvalues/GeneralizedEigenSolver.h \
  /usr/include/eigen3/Eigen/src/Eigenvalues/./RealQZ.h \
  /usr/include/eigen3/Eigen/src/Eigenvalues/MatrixBaseEigenvalues.h \
- include/abo/gau_rff.h
+ include/abo/gau_rff.h include/abo/QR_decomposition.h \
+ include/abo/last_row_givens.h include/abo/ABO.h include/add_row_col.h \
+ include/abo/logger.h include/pseudo_inverse.h
 /usr/include/eigen3/Eigen/Dense:
 /usr/include/eigen3/Eigen/Core:
 /usr/include/eigen3/Eigen/src/Core/util/DisableStupidWarnings.h:
@@ -377,3 +379,9 @@ obj/abo/gau_rff.o: src/abo/gau_rff.cpp /usr/include/eigen3/Eigen/Dense \
 /usr/include/eigen3/Eigen/src/Eigenvalues/./RealQZ.h:
 /usr/include/eigen3/Eigen/src/Eigenvalues/MatrixBaseEigenvalues.h:
 include/abo/gau_rff.h:
+include/abo/QR_decomposition.h:
+include/abo/last_row_givens.h:
+include/abo/ABO.h:
+include/add_row_col.h:
+include/abo/logger.h:
+include/pseudo_inverse.h:

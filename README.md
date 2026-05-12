@@ -85,20 +85,20 @@ are written to a CSV file.
 ```bash
 ./bin/gridsearch_eurusd_test_best \
   --run abo,qrd,krls \
-  --first_date 5376 \
+  --first_date 7680 \
   --start_k 0 \
   --end_k 5 \
-  --val_length 1344 \
+  --val_length 1920 \
   --warmup 50 \
-  --abo_lags 19 \
-  --abo_window 20 \
-  --abo_sigma 6.50586 \
-  --abo_log2D 11 \
-  --qrd_lags 48 \
-  --qrd_window 128 \
-  --krls_lags 25 \
-  --krls_window 261 \
-  --krls_sigma 4.2 \
+  --abo_lags 20 \
+  --abo_window 21 \
+  --abo_sigma 8.0 \
+  --abo_log2D 13 \
+  --qrd_lags 20 \
+  --qrd_window 272 \
+  --krls_lags 20 \
+  --krls_window 421 \
+  --krls_sigma .31 \
   --out_csv results/gridsearch/EURUSD/best_test.csv
 ```
 

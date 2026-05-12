@@ -276,8 +276,10 @@ static inline void dataset_creation(
       return;
    }
 
-   Eigen::Map<Eigen::VectorXd> y_old(target_data.data() + start_row, num_rows);
-   Eigen::Map<Eigen::VectorXd> y_update_old(target_data.data() + start_row + num_rows, num_elements);
+   // Eigen::Map<Eigen::VectorXd> y_old(target_data.data() + start_row, num_rows);
+   // Eigen::Map<Eigen::VectorXd> y_update_old(target_data.data() + start_row + num_rows, num_elements);
+   Eigen::Map<Eigen::VectorXd> y_old(target_data.data() + start_row - num_rows, num_rows);
+   Eigen::Map<Eigen::VectorXd> y_update_old(target_data.data() + start_row, num_elements);
 
    for (int i = 0; i < num_rows; ++i)
       y[i] = y_old(i);
@@ -287,7 +289,7 @@ static inline void dataset_creation(
       y_update[i] = y_update_old(i);
 
    const int len_data_set = static_cast<int>(data_set.size());
-   const int n_rows_mat = len_data_set - start_row;
+   const int n_rows_mat = len_data_set - (start_row - num_rows);
    if (n_rows_mat <= num_rows)
    {
       initial_matrix.resize(0, 0);
@@ -298,7 +300,7 @@ static inline void dataset_creation(
    Eigen::MatrixXd close_lag_mat(n_rows_mat, num_cols);
    for (int i = 0; i < n_rows_mat; ++i)
       for (int j = 0; j < num_cols; ++j)
-         close_lag_mat(i, j) = data_set[i + start_row][j];
+         close_lag_mat(i, j) = data_set[i + (start_row - num_rows)][j];
 
    initial_matrix = close_lag_mat.block(0, 0, num_rows, num_cols);
    update_matrix = close_lag_mat.block(num_rows, 0, close_lag_mat.rows() - num_rows, num_cols);
@@ -793,5 +795,17 @@ int main(int argc, char **argv)
    }
 
    std::cout << "\n";
+
+   // after the existing SUMMARY line
+   std::cout << "RESULT "
+             << "abo_mse " << mean_or_nan(agg_abo.mse_sum, agg_abo.n) << " "
+             << "abo_us_rff " << mean_or_nan(agg_abo.us_rff_sum, agg_abo.n) << " "
+             << "abo_us_update " << mean_or_nan(agg_abo.us_update_sum, agg_abo.n) << " "
+             << "qrd_mse " << mean_or_nan(agg_qrd.mse_sum, agg_qrd.n) << " "
+             << "qrd_us_update " << mean_or_nan(agg_qrd.us_update_sum, agg_qrd.n) << " "
+             << "krls_mse " << mean_or_nan(agg_krls.mse_sum, agg_krls.n) << " "
+             << "krls_us_update " << mean_or_nan(agg_krls.us_update_sum, agg_krls.n)
+             << "\n";
+
    return 0;
 }

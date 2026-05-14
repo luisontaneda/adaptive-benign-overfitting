@@ -12,28 +12,30 @@ namespace
    // Generated once and cached. No LFS CSV files needed.
    struct DataCache
    {
-      int num_rows{};  // init batch size (N)
-      int num_cols{};  // lag dimension (L)
-      std::vector<double> y_vec;         // init targets, size = num_rows
-      std::vector<double> y_update_vec;  // streaming targets
-      Eigen::MatrixXd initial_matrix;    // num_rows x num_cols (raw, standardized)
-      Eigen::MatrixXd update_matrix;     // n_its x num_cols  (raw, standardized)
+      int num_rows{};                   // init batch size (N)
+      int num_cols{};                   // lag dimension (L)
+      std::vector<double> y_vec;        // init targets, size = num_rows
+      std::vector<double> y_update_vec; // streaming targets
+      Eigen::MatrixXd initial_matrix;   // num_rows x num_cols (raw, standardized)
+      Eigen::MatrixXd update_matrix;    // n_its x num_cols  (raw, standardized)
    };
 
    const DataCache &getData()
    {
       static bool inited = false;
       static DataCache cache;
-      if (inited) return cache;
+      if (inited)
+         return cache;
 
-      const int LAG     = 7;
-      const int N       = 20;
-      const int N_ITS   = 1000;  // streaming steps in benchmark
-      const int BURNIN  = 500;
+      const int LAG = 7;
+      const int N = 20;
+      const int N_ITS = 1000; // streaming steps in benchmark
+      const int BURNIN = 500;
       const int T_TOTAL = BURNIN + LAG + N + N_ITS;
 
       std::srand(42);
-      auto unif = []() -> double {
+      auto unif = []() -> double
+      {
          return 2.0 * (static_cast<double>(std::rand()) / RAND_MAX) - 1.0;
       };
 
@@ -55,7 +57,8 @@ namespace
       std::vector<double> y_full(NROWS);
       for (int i = 0; i < NROWS; ++i)
       {
-         for (int j = 0; j < LAG; ++j) X_full(i, j) = s[i + j];
+         for (int j = 0; j < LAG; ++j)
+            X_full(i, j) = s[i + j];
          y_full[i] = s[i + LAG];
       }
 
@@ -63,7 +66,8 @@ namespace
       std::vector<double> feat_mean(LAG, 0.0), feat_std(LAG, 1.0);
       for (int j = 0; j < LAG; ++j)
       {
-         for (int i = 0; i < N; ++i) feat_mean[j] += X_full(i, j);
+         for (int i = 0; i < N; ++i)
+            feat_mean[j] += X_full(i, j);
          feat_mean[j] /= N;
          double var = 0.0;
          for (int i = 0; i < N; ++i)
@@ -72,7 +76,8 @@ namespace
             var += d * d;
          }
          feat_std[j] = std::sqrt(var / N);
-         if (feat_std[j] < 1e-12) feat_std[j] = 1.0;
+         if (feat_std[j] < 1e-12)
+            feat_std[j] = 1.0;
       }
       for (int i = 0; i < NROWS; ++i)
          for (int j = 0; j < LAG; ++j)
@@ -81,7 +86,7 @@ namespace
       cache.num_rows = N;
       cache.num_cols = LAG;
       cache.initial_matrix = X_full.topRows(N);
-      cache.update_matrix  = X_full.middleRows(N, N_ITS);
+      cache.update_matrix = X_full.middleRows(N, N_ITS);
       cache.y_vec.assign(y_full.begin(), y_full.begin() + N);
       cache.y_update_vec.assign(y_full.begin() + N, y_full.begin() + N + N_ITS);
 
@@ -109,7 +114,8 @@ namespace
       {
          state.PauseTiming();
          Eigen::MatrixXd z_new = g_rff.transform(data.update_matrix.row(t));
-         for (int i = 0; i < D; ++i) X_update[i] = z_new(0, i);
+         for (int i = 0; i < D; ++i)
+            X_update[i] = z_new(0, i);
          double y_new = data.y_update_vec[t];
          state.ResumeTiming();
 
@@ -122,9 +128,10 @@ namespace
                raw_old(0, j) = X_raw_ring[ring_idx][j];
             Eigen::MatrixXd z_old = g_rff.transform(raw_old);
             std::vector<double> z_old_v(D);
-            for (int j = 0; j < D; ++j) z_old_v[j] = z_old(0, j);
+            for (int j = 0; j < D; ++j)
+               z_old_v[j] = z_old(0, j);
             state.ResumeTiming();
-            abo.downdate(z_old_v.data(), y_ring[ring_idx]);
+            abo.downdate(z_old_v.data());
          }
 
          // Ring buffer update (untimed)
@@ -170,7 +177,8 @@ static void BM_ABO_RFF(benchmark::State &state)
    std::vector<double> y_ring(N);
    for (int i = 0; i < N; ++i)
    {
-      for (int j = 0; j < d; ++j) X_raw_ring[i][j] = data.initial_matrix(i, j);
+      for (int j = 0; j < d; ++j)
+         X_raw_ring[i][j] = data.initial_matrix(i, j);
       y_ring[i] = y_init[i];
    }
    int ring_idx = 0;

@@ -79,7 +79,7 @@ void givens_rot(int p, double *v, double *G)
 }
 
 QRDRLS::QRDRLS(int max_obs, int dim_, double forgetting_factor, double delta)
-    : max_obs_(max_obs), ff_(forgetting_factor), sqrt_ff_(std::sqrt(forgetting_factor)), delta_(delta), beta_(nullptr), UT_(nullptr), initialized_(false), dim_(dim_)
+    : max_obs_(max_obs), ff_(forgetting_factor), sqrt_ff_(std::sqrt(forgetting_factor)), delta_(delta), beta_(nullptr), UT_(nullptr), initialized_(false), dim_(dim_), ring_idx_(0)
 {
     if (forgetting_factor <= 0.0 || forgetting_factor > 1.0)
     {
@@ -90,83 +90,80 @@ QRDRLS::QRDRLS(int max_obs, int dim_, double forgetting_factor, double delta)
         throw std::invalid_argument("Delta must be positive");
     }
 
-    // Allocate memory
-    beta_ = new double[dim_];
+    // Allocate memory - pre-allocated to max_obs_ capacity (no reallocation)
+    beta_ = new double[dim_]();
 
-    // Initialize to zero
-    std::memset(beta_, 0, dim_ * sizeof(double));
+    // Allocate UT_ (dim+1) x (dim+1) for Givens transformations
+    UT_ = new double[dim_ * (dim_ + 1)]();
+
+    // Allocate ring buffer and working arrays at full capacity
+    X_ring_ = new double[max_obs_ * dim_]();
+    y_ring_ = new double[max_obs_]();
+    X_ = new double[max_obs_ * dim_]();
+    y_ = new double[max_obs_]();
 }
 
 QRDRLS::~QRDRLS()
 {
     delete[] beta_;
     delete[] UT_;
-    delete[] R_;
-    delete[] P_;
     delete[] X_;
     delete[] y_;
+    delete[] X_ring_;
+    delete[] y_ring_;
 }
 
 void QRDRLS::batchInitialize(const double *X_batch, const double *y_batch, int batch_size, int dim)
 {
-
-    // Form regularized data matrix [sqrt(λ^batch_size * δ) * I; X_batch]
-    double reg_term = delta_ * std::pow(ff_, static_cast<double>(batch_size));
-    double sqrt_reg = std::sqrt(reg_term);
-
     n_obs_ = batch_size;
 
-    // Build regularized X matrix (column-major)
-    // double *X_reg = new double[n_obs_ * dim_];
-    X_ = new double[n_obs_ * dim_]();
-    y_ = new double[n_obs_]();
+    // Copy initial batch to ring buffers
+    std::memcpy(X_ring_, X_batch, batch_size * dim_ * sizeof(double));
+    std::memcpy(y_ring_, y_batch, batch_size * sizeof(double));
+    ring_idx_ = (batch_size % max_obs_);
 
-    std::memcpy(y_, y_batch, n_obs_ * sizeof(double));
-    // Fill regularization part: sqrt_reg * I in first (N+1) rows
-    for (int col = 0; col < dim_; ++col)
-    {
-        for (int row = 0; row < n_obs_; ++row)
-        {
-            X_[col * n_obs_ + row] = (row == col) ? sqrt_reg : 0.0;
-        }
-    }
+    // Copy batch data to pre-allocated buffers
+    std::memcpy(X_, X_batch, batch_size * dim_ * sizeof(double));
+    std::memcpy(y_, y_batch, batch_size * sizeof(double));
 
-    // Fill X_batch part (already column-major)
-    for (int col = 0; col < dim_; ++col)
-    {
-        for (int row = 0; row < batch_size; ++row)
-        {
-            X_[col * n_obs_ + row] += X_batch[col * batch_size + row];
-        }
-    }
+    // Compute Q and R from X_ (using our copy to avoid const issues)
+    double *Q_temp, *R_temp;
+    std::tie(Q_temp, R_temp) = Q_R_compute(X_, batch_size, dim_);
 
-    std::tie(Q_, R_) = Q_R_compute(X_, n_obs_, dim_);
-    P_ = new double[n_obs_ * dim_];
-    pinv(R_, P_, n_obs_, dim_);
-    UT_ = new double[dim_ * (dim_ + 1)]();
+    // Compute P = (R^T)^{-1}
+    double *P_temp = new double[batch_size * dim_];
+    pinv(R_temp, P_temp, batch_size, dim_);
 
-    // Compute Q^T * d_reg for right-hand side
-    double z[n_obs_];
-
-    cblas_dgemv(CblasColMajor, CblasTrans,
-                n_obs_, n_obs_, 1.0, Q_, n_obs_, y_batch, 1, 0.0, z, 1);
-
-    cblas_dgemv(CblasColMajor, CblasNoTrans,
-                dim_, n_obs_, 1.0, P_, dim_, z, 1, 0.0, beta_, 1);
-
+    // Initialize UT_ from P_temp
     for (int j = 0; j < dim_; ++j)
     {
         for (int i = 0; i < dim_; ++i)
         {
-            UT_[j + i * (dim_ + 1)] = P_[i + j * dim_];
+            UT_[j + i * (dim_ + 1)] = P_temp[i + j * dim_];
         }
     }
+
+    // Compute Q^T * y_batch for right-hand side
+    double z[batch_size];
+    cblas_dgemv(CblasColMajor, CblasTrans,
+                batch_size, batch_size, 1.0, Q_temp, batch_size, y_batch, 1, 0.0, z, 1);
+
+    cblas_dgemv(CblasColMajor, CblasNoTrans,
+                dim_, batch_size, 1.0, P_temp, dim_, z, 1, 0.0, beta_, 1);
+
+    delete[] Q_temp;
+    delete[] R_temp;
+    delete[] P_temp;
 }
 
 void QRDRLS::update(const double *new_x, double new_y, double &prediction, double &error)
 {
+    // Store new sample in ring buffers
+    std::memcpy(&X_ring_[ring_idx_ * dim_], new_x, dim_ * sizeof(double));
+    y_ring_[ring_idx_] = new_y;
+
     prediction = cblas_ddot(dim_, new_x, 1, beta_, 1);
-    error = new_y - (prediction);
+    error = new_y - prediction;
 
     int dim_p_1 = dim_ + 1;
 
@@ -197,16 +194,14 @@ void QRDRLS::update(const double *new_x, double new_y, double &prediction, doubl
         UT_[i * dim_p_1 + dim_] = 0;
     }
 
-    X_ = addRowColMajor(X_, n_obs_, dim_);
-    y_ = addRowColMajor(y_, n_obs_, 1);
-
+    // Append new X sample and y to pre-allocated buffer (no reallocation)
+    std::memcpy(&X_[n_obs_ * dim_], new_x, dim_ * sizeof(double));
     y_[n_obs_] = new_y;
-    for (int i = 0; i < dim_; i++)
-    {
-        X_[(i + 1) * n_obs_ + i] = new_x[i];
-    }
 
     n_obs_++;
+
+    // Advance ring buffer position
+    ring_idx_ = (ring_idx_ + 1) % max_obs_;
 
     if (n_obs_ > max_obs_)
     {
@@ -216,10 +211,14 @@ void QRDRLS::update(const double *new_x, double new_y, double &prediction, doubl
 
 void QRDRLS::downdate()
 {
+    // Retrieve the oldest sample from ring buffer (at current ring_idx_ position)
+    double x_oldest[dim_];
+    std::memcpy(x_oldest, &X_ring_[ring_idx_ * dim_], dim_ * sizeof(double));
+
     double x_T[dim_];
     for (int i = 0; i < dim_; ++i)
     {
-        x_T[i] = X_[n_obs_ * i]; // Copy the first row=
+        x_T[i] = X_[i * max_obs_]; // Copy the first row (column-major stride)
     }
 
     int dim_p_1 = dim_ + 1;
@@ -273,8 +272,20 @@ void QRDRLS::downdate()
         UT_[i * dim_p_1 + dim_] = 0;
     }
 
-    X_ = deleteRowColMajor(X_, n_obs_, dim_);
-    y_ = deleteRowColMajor(y_, n_obs_, 1);
+    // Shift X: move rows 1..n_obs_-1 to rows 0..n_obs_-2 (column-major)
+    for (int j = 0; j < dim_; ++j)
+    {
+        for (int i = 0; i < n_obs_ - 1; ++i)
+        {
+            X_[i + j * max_obs_] = X_[i + 1 + j * max_obs_];
+        }
+    }
+
+    // Shift y: move y[1]..y[n_obs_-1] to y[0]..y[n_obs_-2]
+    for (int i = 0; i < n_obs_ - 1; ++i)
+    {
+        y_[i] = y_[i + 1];
+    }
 
     n_obs_--;
 }

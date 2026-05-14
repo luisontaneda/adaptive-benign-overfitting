@@ -2,28 +2,40 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug with GDB",
+      "name": "Debug Benchmark Crash",
       "type": "cppdbg",
       "request": "launch",
-      //"program": "${workspaceFolder}/abo_predict", // Path to your executable
-      "program": "${workspaceFolder}/bin/dd_test",
-      //"program": "${workspaceFolder}/bin/elect_test",
-      //"program": "${workspaceFolder}/bin/gridsearch_test",
-      //"program": "${workspaceFolder}/bin/gridsearch_test_best",
-      //"program": "${workspaceFolder}/bin/gridsearch_eurusd_test_best",
-      //"program": "${workspaceFolder}/bin/EURUSD_test",
-      //"program": "${workspaceFolder}/bin/baseline_qrd_rls_eurusd",
-      //"program": "${workspaceFolder}/bin/baseline_qrd_rls_elect",
-      //"program": "${workspaceFolder}/bin/baseline_k_rls_elect",
-      //"program": "${workspaceFolder}/bin/baseline_k_rls_eurusd",
-      //"program": "${workspaceFolder}/bin/real_cond_num_test",
-      //"program": "${workspaceFolder}/bin/timing_test",
+      "program": "${workspaceFolder}/bin/gridsearch_eurusd_test_best_bench",
       "args": [
-        "--n_trials 300",
-        "--lags 20",
-        "--kfolds 8",
-        "--model_name krls"
-      ], // Command-line arguments
+        "--first_date",
+        "7680",
+        "--val_length",
+        "1920",
+        "--start_k",
+        "0",
+        "--end_k",
+        "5",
+        "--run",
+        "abo,qrd,krls",
+        "--abo_lags",
+        "20",
+        "--abo_window",
+        "21",
+        "--abo_sigma",
+        "8.0",
+        "--abo_log2D",
+        "13",
+        "--qrd_lags",
+        "20",
+        "--qrd_window",
+        "272",
+        "--krls_lags",
+        "20",
+        "--krls_window",
+        "421",
+        "--krls_sigma",
+        "3.125"
+      ],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],
@@ -34,14 +46,17 @@
           "description": "Enable pretty-printing for gdb",
           "text": "-enable-pretty-printing",
           "ignoreFailures": true
+        },
+        {
+          "description": "Break on C++ exceptions",
+          "text": "catch throw",
+          "ignoreFailures": true
         }
       ],
-      "preLaunchTask": "build", // Run the build task before debugging
-      "miDebuggerPath": "/usr/bin/gdb", // Path to GDB
+      "preLaunchTask": "build",
+      "miDebuggerPath": "/usr/bin/gdb",
       "logging": {
-        "trace": true,
-        "traceResponse": true,
-        "engineLogging": true
+        "engineLogging": false
       }
     }
   ]

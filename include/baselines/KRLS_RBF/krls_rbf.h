@@ -53,15 +53,20 @@ private:
     double sigma_;
     bool initialized_;
 
-    // Dictionary and KRLS state
-    double *X_;
-    double *beta_;
-    double *P_;
-    double *K_;
-    double *y_;
+    // Pre-allocated fixed-size buffers (no reallocation in hot path)
+    double *X_;    // window_size_ * dim_, column-major
+    double *beta_; // dim_
+    double *P_;    // window_size_ * window_size_, column-major
+    double *K_;    // window_size_ * window_size_, column-major
+    double *y_;    // window_size_
+
+    // Ring buffer for efficient windowing (pre-allocated, no reallocation)
+    double *X_ring_; // Pre-allocated to window_size_ * dim_
+    double *y_ring_; // Pre-allocated to window_size_
+    int ring_idx_;   // Current position in ring buffer
 
     // Workspace
-    double *h_;
+    double *h_; // window_size_
 
     // Optional batch initialization
     double *X_init_;

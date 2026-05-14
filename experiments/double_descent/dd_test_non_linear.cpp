@@ -96,14 +96,14 @@ int main()
    vector<double> all_cond_num_var_array;
 
    for (int idx_rff = 1; idx_rff < 15; idx_rff++)
-   //for (int idx_rff = 2; idx_rff < 128; idx_rff++)
+   // for (int idx_rff = 2; idx_rff < 128; idx_rff++)
    {
       int D = pow(2, idx_rff);
-      //int D = idx_rff;
+      // int D = idx_rff;
       double kernel_var = 1.0;
       // double kernel_var = 1.0 / 4.0;
       // double kernel_var = 1.0 / 2.0;
-      bool seed = true;
+      int seed = 0;
 
       RFFType g_rff(d, D, kernel_var, seed);
       MatrixXd X_old = g_rff.transform_matrix(initial_matrix);
@@ -119,7 +119,7 @@ int main()
       }
 
       int max_obs = num_rows;
-      //double ff = 1.0;
+      // double ff = 1.0;
       double ff = .9;
       ABO abo(X, y, max_obs, ff, D, max_obs);
 
@@ -129,7 +129,8 @@ int main()
       std::vector<double> y_ring(N, 0.0);
       for (int ri = 0; ri < N; ri++)
       {
-         for (int j = 0; j < num_cols; j++) X_raw_ring[ri][j] = initial_matrix(ri, j);
+         for (int j = 0; j < num_cols; j++)
+            X_raw_ring[ri][j] = initial_matrix(ri, j);
          y_ring[ri] = y[ri];
       }
       int ring_idx = 0;
@@ -158,20 +159,23 @@ int main()
          if (abo.n_obs_ == N)
          {
             MatrixXd raw_old_mat(1, num_cols);
-            for (int j = 0; j < num_cols; j++) raw_old_mat(0, j) = X_raw_ring[ring_idx][j];
+            for (int j = 0; j < num_cols; j++)
+               raw_old_mat(0, j) = X_raw_ring[ring_idx][j];
             MatrixXd z_old_mat = g_rff.transform(raw_old_mat);
             std::vector<double> z_old_arr(D);
-            for (int j = 0; j < D; j++) z_old_arr[j] = z_old_mat(0, j);
+            for (int j = 0; j < D; j++)
+               z_old_arr[j] = z_old_mat(0, j);
             abo.downdate(z_old_arr.data());
          }
          // Update ring buffer with current new point
-         for (int j = 0; j < num_cols; j++) X_raw_ring[ring_idx][j] = update_matrix(i, j);
+         for (int j = 0; j < num_cols; j++)
+            X_raw_ring[ring_idx][j] = update_matrix(i, j);
          y_ring[ring_idx] = y_update[i];
          ring_idx = (ring_idx + 1) % N;
 
          // preds.push_back(abo.pred(X_update.data()));
          abo.update(X_update.data(), y_update[i]);
-         //preds.push_back(abo.pred(X_update.data()));
+         // preds.push_back(abo.pred(X_update.data()));
          double temp_res = pow(preds[i] - y_update[i], 2);
          mse.push_back(temp_res);
          all_mse += temp_res;

@@ -13,7 +13,7 @@ CXXFLAGS  = -std=c++17 $(INCLUDES) -DHAVE_LAPACK_CONFIG_H -DLAPACK_COMPLEX_STRUC
 			-Wno-reorder -Wno-comment -Wno-deprecated-declarations
 
 LDFLAGS   ?= -Llibs/lib
-LDLIBS    ?= -lopenblas -llapacke -lm
+LDLIBS    ?= -lopenblas -llapacke -lm -lfmt
 DEBUGFLAGS = -g -DEIGEN_INITIALIZE_MATRICES_BY_ZERO
 ifdef DEBUG
   CXXFLAGS += $(DEBUGFLAGS) -DLOG_LEVEL=4

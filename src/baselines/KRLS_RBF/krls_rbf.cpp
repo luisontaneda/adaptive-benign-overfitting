@@ -33,23 +33,23 @@ KRLS_RBF::KRLS_RBF(const double *X_init, const double *y_init, int n_obs,
       initialized_(false),
       X_init_(nullptr),
       y_init_(nullptr),
-      n_init_samples_(0)
+      n_init_samples_(0),
+      ring_idx_(0)
 {
 
-    // Allocate state arrays
-    beta_ = new double[n_obs_];
-    P_ = new double[n_obs_ * n_obs_];
+    // Pre-allocate all buffers to window_size_ capacity (no reallocation in hot path)
+    beta_ = new double[dim_]();
+    P_ = new double[window_size_ * window_size_]();
 
-    // Allocate working arrays
-    h_ = new double[n_obs_];
-    X_ = new double[n_obs_ * dim_];
-    y_ = new double[n_obs_];
-    K_ = new double[n_obs_ * n_obs_];
+    // Allocate ring buffers (pre-allocated to window_size_)
+    X_ring_ = new double[window_size_ * dim_]();
+    y_ring_ = new double[window_size_]();
 
-    // Initialize to zero
-    std::memset(X_, 0, n_obs_ * dim_ * sizeof(double));
-    std::memset(beta_, 0, n_obs_ * sizeof(double));
-    std::memset(P_, 0, n_obs_ * n_obs_ * sizeof(double));
+    // Allocate working arrays at full capacity
+    h_ = new double[window_size_]();
+    X_ = new double[window_size_ * dim_]();
+    y_ = new double[window_size_]();
+    K_ = new double[window_size_ * window_size_]();
 
     // Store initial data if provided
     if (X_init != nullptr && y_init != nullptr && n_obs_ > 0)
@@ -59,6 +59,11 @@ KRLS_RBF::KRLS_RBF(const double *X_init, const double *y_init, int n_obs,
 
         vectorCopy(X_, X_init, n_obs_ * dim_);
         vectorCopy(y_, y_init, n_obs_);
+
+        // Copy initial batch to ring buffers
+        std::memcpy(X_ring_, X_init, n_obs_ * dim_ * sizeof(double));
+        std::memcpy(y_ring_, y_init, n_obs_ * sizeof(double));
+        ring_idx_ = (n_obs_ % window_size_);
 
         // Initialize from batch data
         initializeFromBatch(X_, y_, n_obs_);
@@ -73,6 +78,8 @@ KRLS_RBF::~KRLS_RBF()
     delete[] P_;
     delete[] h_;
     delete[] K_;
+    delete[] X_ring_;
+    delete[] y_ring_;
 
     if (X_init_ != nullptr)
     {
@@ -135,53 +142,52 @@ void KRLS_RBF::initializeFromBatch(const double *X, const double *y, int n_obs_)
 // Update with new sample
 void KRLS_RBF::update(const double *new_x, double new_y, double &prediction, double &error)
 {
-    K_ = addRowAndColumnColMajor(K_, n_obs_, n_obs_);
+    // Store new sample in ring buffers
+    std::memcpy(&X_ring_[ring_idx_ * dim_], new_x, dim_ * sizeof(double));
+    y_ring_[ring_idx_] = new_y;
 
-    // Compute h(i): vector of kernel evaluations
+    // Compute h(i): vector of kernel evaluations with existing samples
     for (int j = 0; j < n_obs_; ++j)
     {
-        const double *xj0 = &X_[j]; // sample j, feature 0
-        h_[j] = kernel(new_x, 1, xj0, n_obs_);
+        const double *xj0 = &X_[j * dim_]; // sample j, column-major stride
+        h_[j] = kernel(new_x, 1, xj0, 1);
 
-        K_[j * (n_obs_ + 1) + n_obs_] = h_[j];
-        K_[(n_obs_ + 1) * n_obs_ + j] = h_[j];
+        // Update K with new row/column
+        K_[j + n_obs_ * window_size_] = h_[j]; // New row, old columns
+        K_[n_obs_ + j * window_size_] = h_[j]; // New column, old rows
     }
 
     double d_k = kernel(new_x, 1, new_x, 1) + delta_;
-    K_[(n_obs_ + 1) * (n_obs_ + 1) - 1] = d_k;
+    K_[n_obs_ + n_obs_ * window_size_] = d_k; // Diagonal element
 
     prediction = cblas_ddot(n_obs_, h_, 1, beta_, 1);
-    error = new_y - (prediction);
+    error = new_y - prediction;
 
-    X_ = addRowColMajor(X_, n_obs_, dim_);
-
-    for (int i = 0; i < dim_; i++)
-    {
-        X_[(i + 1) * n_obs_ + i] = new_x[i];
-    }
+    // Store new X sample (append to pre-allocated buffer)
+    std::memcpy(&X_[n_obs_ * dim_], new_x, dim_ * sizeof(double));
 
     // Update of inverse matrix
-
-    double P_b[n_obs_];
+    double P_b[window_size_];
     cblas_dgemv(CblasColMajor, CblasNoTrans,
-                n_obs_, n_obs_, 1.0, P_, n_obs_, h_, 1, 0.0, P_b, 1);
-    double g = 1 / (d_k - cblas_ddot(n_obs_, h_, 1, P_b, 1));
+                n_obs_, n_obs_, 1.0, P_, window_size_, h_, 1, 0.0, P_b, 1);
+    double g = 1.0 / (d_k - cblas_ddot(n_obs_, h_, 1, P_b, 1));
 
-    cblas_dger(CblasColMajor, n_obs_, n_obs_, g, P_b, 1, P_b, 1, P_, n_obs_);
+    cblas_dger(CblasColMajor, n_obs_, n_obs_, g, P_b, 1, P_b, 1, P_, window_size_);
 
-    P_ = addRowAndColumnColMajor(P_, n_obs_, n_obs_);
-
+    // Append new row/column to P (write at position n_obs_)
     for (int j = 0; j < n_obs_; ++j)
     {
-        P_[j * (n_obs_ + 1) + n_obs_] = -g * P_b[j];
-        P_[(n_obs_ + 1) * n_obs_ + j] = -g * P_b[j];
+        P_[j + n_obs_ * window_size_] = -g * P_b[j];
+        P_[n_obs_ + j * window_size_] = -g * P_b[j];
     }
+    P_[n_obs_ + n_obs_ * window_size_] = g;
 
-    P_[(n_obs_ + 1) * (n_obs_ + 1) - 1] = g;
-    y_ = addRowColMajor(y_, n_obs_, 1);
     y_[n_obs_] = new_y;
 
     n_obs_++;
+
+    // Advance ring buffer position
+    ring_idx_ = (ring_idx_ + 1) % window_size_;
 
     if (n_obs_ > window_size_)
     {
@@ -191,28 +197,74 @@ void KRLS_RBF::update(const double *new_x, double new_y, double &prediction, dou
 
 void KRLS_RBF::downdate()
 {
+    // Shift all K and P rows/columns down by one (remove oldest sample)
+    // K and P are window_size_ x window_size_ column-major
 
-    K_ = deleteRowColMajor(K_, n_obs_, n_obs_);
-    K_ = deleteColColMajor(K_, n_obs_ - 1, n_obs_);
+    // Shift K: move rows 1..n_obs_-1 to rows 0..n_obs_-2
+    for (int j = 0; j < n_obs_; ++j)
+    {
+        for (int i = 0; i < n_obs_ - 1; ++i)
+        {
+            K_[i + j * window_size_] = K_[i + 1 + j * window_size_];
+        }
+    }
+    // Shift K columns: move columns 1..n_obs_-1 to columns 0..n_obs_-2
+    for (int j = 1; j < n_obs_; ++j)
+    {
+        for (int i = 0; i < n_obs_ - 1; ++i)
+        {
+            K_[i + (j - 1) * window_size_] = K_[i + j * window_size_];
+        }
+    }
 
-    double f[n_obs_ - 1];
-
+    // Extract f vector from P before shift
+    double f[window_size_];
     for (int i = 0; i < n_obs_ - 1; i++)
     {
         f[i] = P_[i + 1];
     }
     double e = P_[0];
-    P_ = deleteRowColMajor(P_, n_obs_, n_obs_);
-    P_ = deleteColColMajor(P_, n_obs_ - 1, n_obs_);
 
-    y_ = deleteRowColMajor(y_, n_obs_, 1);
-    X_ = deleteRowColMajor(X_, n_obs_, dim_);
+    // Shift P: move rows 1..n_obs_-1 to rows 0..n_obs_-2
+    for (int j = 0; j < n_obs_; ++j)
+    {
+        for (int i = 0; i < n_obs_ - 1; ++i)
+        {
+            P_[i + j * window_size_] = P_[i + 1 + j * window_size_];
+        }
+    }
+    // Shift P columns: move columns 1..n_obs_-1 to columns 0..n_obs_-2
+    for (int j = 1; j < n_obs_; ++j)
+    {
+        for (int i = 0; i < n_obs_ - 1; ++i)
+        {
+            P_[i + (j - 1) * window_size_] = P_[i + j * window_size_];
+        }
+    }
+
+    // Shift y: move y[1]..y[n_obs_-1] to y[0]..y[n_obs_-2]
+    for (int i = 0; i < n_obs_ - 1; ++i)
+    {
+        y_[i] = y_[i + 1];
+    }
+
+    // Shift X: move rows 1..n_obs_-1 to rows 0..n_obs_-2
+    for (int j = 0; j < dim_; ++j)
+    {
+        for (int i = 0; i < n_obs_ - 1; ++i)
+        {
+            X_[i + j * window_size_] = X_[i + 1 + j * window_size_];
+        }
+    }
+
     n_obs_--;
 
-    cblas_dger(CblasColMajor, n_obs_, n_obs_, -1 / e, f, 1, f, 1, P_, n_obs_);
+    // Rank-1 update to P
+    cblas_dger(CblasColMajor, n_obs_, n_obs_, -1.0 / e, f, 1, f, 1, P_, window_size_);
 
+    // Update beta from P and y
     cblas_dgemv(CblasColMajor, CblasNoTrans,
-                n_obs_, n_obs_, 1.0, P_, n_obs_, y_, 1, 0.0, beta_, 1);
+                n_obs_, n_obs_, 1.0, P_, window_size_, y_, 1, 0.0, beta_, 1);
 }
 
 // Reset filter

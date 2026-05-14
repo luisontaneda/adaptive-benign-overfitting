@@ -378,7 +378,8 @@ static inline FoldResultRow run_fold_abo(
       return row;
    }
 
-   const bool seed = true;
+   // const bool seed = true;
+   int seed = 0;
    GaussianRFF g_rff(L, D, sigma, seed);
 
    MatrixXd X_old = g_rff.transform_matrix(initial_matrix);
@@ -394,7 +395,8 @@ static inline FoldResultRow run_fold_abo(
    std::vector<double> y_ring(W, 0.0);
    for (int ri = 0; ri < W; ri++)
    {
-      for (int j = 0; j < L; j++) X_raw_ring[ri][j] = initial_matrix(ri, j);
+      for (int j = 0; j < L; j++)
+         X_raw_ring[ri][j] = initial_matrix(ri, j);
       y_ring[ri] = y[ri];
    }
    int ring_idx = 0;
@@ -426,10 +428,12 @@ static inline FoldResultRow run_fold_abo(
       if (abo.n_obs_ == W)
       {
          MatrixXd raw_old_mat(1, L);
-         for (int j = 0; j < L; j++) raw_old_mat(0, j) = X_raw_ring[ring_idx][j];
+         for (int j = 0; j < L; j++)
+            raw_old_mat(0, j) = X_raw_ring[ring_idx][j];
          MatrixXd z_old_mat = g_rff.transform(raw_old_mat);
          std::vector<double> z_old_arr(D);
-         for (int j = 0; j < D; j++) z_old_arr[j] = z_old_mat(0, j);
+         for (int j = 0; j < D; j++)
+            z_old_arr[j] = z_old_mat(0, j);
          abo.downdate(z_old_arr.data());
       }
 
@@ -438,7 +442,8 @@ static inline FoldResultRow run_fold_abo(
       pred = abo.pred(X_update.data());
 
       // Update ring buffer
-      for (int j = 0; j < L; j++) X_raw_ring[ring_idx][j] = update_matrix(i, j);
+      for (int j = 0; j < L; j++)
+         X_raw_ring[ring_idx][j] = update_matrix(i, j);
       y_ring[ring_idx] = y_update[i];
       ring_idx = (ring_idx + 1) % W;
 

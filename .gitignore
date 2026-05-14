@@ -1,9 +1,22 @@
 obj/
-obj/
 bin/
+*.o
+*.a
+obj/*.o
 bin/*
 obj/*
+
+# Ignore logs and temp files
+*.log
+*.tmp
+logs/bin/
+timing_test
+make/local.mk
+new_version_timing.txt
+old_version_timing.txt
+remove_o_and_exe_from_repo.md
+status.md
+
 libcore_baseline.a
 libcore.a
-timing_test
-*.a
+libs/lapack/

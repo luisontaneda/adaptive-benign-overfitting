@@ -2,19 +2,23 @@
 CXX       ?= g++
 CPPFLAGS  ?= -Iinclude -MMD -MP
 
-INCLUDES = -I$(INC_DIR) -I/usr/include -I/usr/include/eigen3 -I/usr/lib/lapack
+INCLUDES = -Iinclude -I/usr/include -I/usr/include/x86_64-linux-gnu -I/usr/include/eigen3 -Ilibs/eigen -I/usr/lib/lapack
+
+# Per-machine overrides: create make/local.mk to override INCLUDES, LDFLAGS, LDLIBS
+-include make/local.mk
+
 CXXFLAGS  = -std=c++17 $(INCLUDES) -DHAVE_LAPACK_CONFIG_H -DLAPACK_COMPLEX_STRUCTURE \
 			-Wall -Wno-shadow \
 			-Wno-unused-parameter -Wno-sign-compare -Wno-unused-variable \
 			-Wno-reorder -Wno-comment -Wno-deprecated-declarations
 
 LDFLAGS   ?= -Llibs/lib
-LDLIBS    ?= -lopenblas -llapacke -lgfortran -lm
+LDLIBS    ?= -lopenblas -llapacke -lm
 DEBUGFLAGS = -g -DEIGEN_INITIALIZE_MATRICES_BY_ZERO
 ifdef DEBUG
   CXXFLAGS += $(DEBUGFLAGS) -DLOG_LEVEL=4
 else
-  CXXFLAGS += -DLOG_LEVEL=3
+  CXXFLAGS += -O3 -march=native -DLOG_LEVEL=3
 endif
 
 # --- Layout ------------------------------------------------------------------

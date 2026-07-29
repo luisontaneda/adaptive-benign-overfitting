@@ -219,7 +219,9 @@ static Stats calculate_stats(const std::vector<double> &errors)
     double var_sum = 0.0;
     for (double e : errors)
         var_sum += std::pow(e - mean, 2);
-    return {mse, var_sum / errors.size()};
+    if (errors.size() == 1)
+        return {mse, 0.0};
+    return {mse, var_sum / (errors.size() - 1)};
 }
 
 // ---- Google Benchmark Functions ----
@@ -345,7 +347,7 @@ static void BM_KRLS_Update(benchmark::State &state)
     for (int j = 0; j < L; ++j)
         for (int i = 0; i < W; ++i)
             X_flat[i + j * W] = initial_matrix(i, j);
-    KRLS_RBF krls(X_flat.data(), y_vec.data(), W, L, reg, 1.0 / sigma, W);
+    KRLS_RBF krls(X_flat.data(), y_vec.data(), W, L, reg, sigma, W);
 
     std::vector<double> row_vec(L), errors;
     errors.reserve(val_length);
@@ -367,9 +369,9 @@ static void BM_KRLS_Update(benchmark::State &state)
     delete[] y_update;
 }
 
-BENCHMARK(BM_ABO_Update)->Unit(benchmark::kMillisecond)->Repetitions(1)->DisplayAggregatesOnly(true)->UseRealTime();
-BENCHMARK(BM_QRD_Update)->Unit(benchmark::kMillisecond)->Repetitions(1)->DisplayAggregatesOnly(true)->UseRealTime();
-BENCHMARK(BM_KRLS_Update)->Unit(benchmark::kMillisecond)->Repetitions(1)->DisplayAggregatesOnly(true)->UseRealTime();
+BENCHMARK(BM_ABO_Update)->Unit(benchmark::kMillisecond)->Repetitions(10)->DisplayAggregatesOnly(true)->UseRealTime();
+BENCHMARK(BM_QRD_Update)->Unit(benchmark::kMillisecond)->Repetitions(10)->DisplayAggregatesOnly(true)->UseRealTime();
+BENCHMARK(BM_KRLS_Update)->Unit(benchmark::kMillisecond)->Repetitions(10)->DisplayAggregatesOnly(true)->UseRealTime();
 
 int main(int argc, char **argv)
 {

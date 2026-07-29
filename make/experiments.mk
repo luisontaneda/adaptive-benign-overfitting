@@ -1,142 +1,116 @@
 include make/common.mk
 
-dd_test_MAIN     := $(EXP_DIR)/double_descent/dd_test_non_linear.cpp
-EURUSD_test_MAIN := $(EXP_DIR)/EURUSD/test_EURUSD.cpp
-elect_test_MAIN  := $(EXP_DIR)/electricity/test_elect.cpp
-gridsearch_test_MAIN := $(EXP_DIR)/gridsearch/electricity/test_elect.cpp
-gridsearch_test_best_MAIN := $(EXP_DIR)/gridsearch/electricity/test_elect_best_hyperpar.cpp
-gridsearch_eurusd_test_MAIN := $(EXP_DIR)/gridsearch/EURUSD/test_eurusd.cpp
-gridsearch_eurusd_test_best_MAIN := $(EXP_DIR)/gridsearch/EURUSD/test_eurusd_best_hyperpar.cpp
-frontier_test_MAIN := $(EXP_DIR)/gridsearch/EURUSD/frontier_test_eurusd.cpp
-gridsearch_test_best_bench_MAIN := $(EXP_DIR)/gridsearch/electricity/test_elect_best_hyperpar_bench.cpp
-gridsearch_eurusd_test_best_bench_MAIN := $(EXP_DIR)/gridsearch/EURUSD/test_eurusd_best_hyperpar_bench.cpp
+# Fallback: If OBJEXT is not defined in common.mk, default to .o
+OBJEXT ?= .o
 
-dd_test_OBJS     := $(call make-objs,$(dd_test_MAIN))
-EURUSD_test_OBJS := $(call make-objs,$(EURUSD_test_MAIN))
-elect_test_OBJS  := $(call make-objs,$(elect_test_MAIN))
-gridsearch_test_OBJS := $(call make-objs,$(gridsearch_test_MAIN))
-gridsearch_test_best_OBJS := $(call make-objs,$(gridsearch_test_best_MAIN))
-gridsearch_eurusd_test_OBJS := $(call make-objs,$(gridsearch_eurusd_test_MAIN))
-gridsearch_eurusd_test_best_OBJS := $(call make-objs,$(gridsearch_eurusd_test_best_MAIN))
-frontier_test_OBJS := $(call make-objs,$(frontier_test_MAIN))
-gridsearch_test_best_bench_OBJS := $(call make-objs,$(gridsearch_test_best_bench_MAIN))
-gridsearch_eurusd_test_best_bench_OBJS := $(call make-objs,$(gridsearch_eurusd_test_best_bench_MAIN))
+# ==============================================================================
+# Define all experiments (format: target_name:main_source)
+# ==============================================================================
+EXPERIMENTS := \
+  dd_test:$(EXP_DIR)/double_descent/dd_test_non_linear.cpp \
+  EURUSD_test:$(EXP_DIR)/EURUSD/test_EURUSD.cpp \
+  elect_test:$(EXP_DIR)/electricity/test_elect.cpp \
+  gridsearch_test:$(EXP_DIR)/gridsearch/electricity/test_elect.cpp \
+  gridsearch_test_best:$(EXP_DIR)/gridsearch/electricity/test_elect_best_hyperpar.cpp \
+  gridsearch_eurusd_test:$(EXP_DIR)/gridsearch/EURUSD/test_eurusd.cpp \
+  gridsearch_eurusd_test_best:$(EXP_DIR)/gridsearch/EURUSD/test_eurusd_best_hyperpar.cpp \
+  frontier_test:$(EXP_DIR)/gridsearch/EURUSD/frontier_test_eurusd.cpp \
+  gridsearch_test_best_bench:$(EXP_DIR)/gridsearch/electricity/test_elect_best_hyperpar_bench.cpp \
+  gridsearch_eurusd_test_best_bench:$(EXP_DIR)/gridsearch/EURUSD/test_eurusd_best_hyperpar_bench.cpp
 
-# --- Real binaries go to bin/ -----------------------------------------------
+# Helper macros to split the "target:source" pairs safely
+split-target = $(word 1,$(subst :, ,$1))
+split-source = $(word 2,$(subst :, ,$1))
 
-$(BIN_DIR)/dd_test: $(dd_test_OBJS) libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+# Generate variables from EXPERIMENTS list
+$(foreach e,$(EXPERIMENTS),\
+  $(eval $(call split-target,$e)_MAIN := $(call split-source,$e)))
 
-$(BIN_DIR)/EURUSD_test: $(EURUSD_test_OBJS) libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+$(foreach e,$(EXPERIMENTS),\
+  $(eval $(call split-target,$e)_OBJS := $(OBJ_DIR)/$(call split-target,$e)$(OBJEXT)))
 
-$(BIN_DIR)/elect_test: $(elect_test_OBJS) libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+# ==============================================================================
+# Extract names and generate targets
+# ==============================================================================
+PROG_NAMES := $(foreach e,$(EXPERIMENTS),$(call split-target,$e))
+EXPERIMENT_PROGS := $(addprefix $(BIN_DIR)/,$(PROG_NAMES))
+SORF_NAMES := dd_test EURUSD_test elect_test
+SORF_OBJS := $(addprefix $(OBJ_DIR)/,$(addsuffix _sorf.o,$(SORF_NAMES)))
 
-$(BIN_DIR)/gridsearch_test: $(gridsearch_test_OBJS) libcore_baseline.a libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+# ==============================================================================
+# Dynamic Compilation Rules (Tells Make how to build the .o files)
+# ==============================================================================
+# This template generates a specific compilation rule for every single experiment
+# Dynamic Compilation Rules (Tells Make how to build the .o files)
+# Bench source files need the benchmark include path from libs/benchmark
+# NOTE: bench targets use flattened object names, so explicit bench rules are required.
+define BENCH_COMPILE_RULE
+$$(OBJ_DIR)/$(1)$$(OBJEXT): $(2) | $$(OBJ_DIR)
+	@mkdir -p $$(@D)
+	$$(CXX) $$(CPPFLAGS) $$(BENCH_CPPFLAGS) $$(CXXFLAGS) -c $$< -o $$@
+endef
 
-$(BIN_DIR)/gridsearch_test_best: $(gridsearch_test_best_OBJS) libcore_baseline.a libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+define COMPILE_RULE
+$$(OBJ_DIR)/$(call split-target,$1)$$(OBJEXT): $(call split-source,$1) | $$(OBJ_DIR)
+	@mkdir -p $$(@D)
+	$$(CXX) $$(CPPFLAGS) $$(CXXFLAGS) -c $$< -o $$@
+endef
 
-$(BIN_DIR)/gridsearch_eurusd_test: $(gridsearch_eurusd_test_OBJS) libcore_baseline.a libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+# Evaluate the compilation rule template for every non-bench experiment
+$(foreach e,$(EXPERIMENTS),$(eval $(if $(findstring _bench,$(call split-target,$e)),,$(call COMPILE_RULE,$e))))
 
-$(BIN_DIR)/gridsearch_eurusd_test_best: $(gridsearch_eurusd_test_best_OBJS) libcore_baseline.a libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+# Evaluate explicit bench compile rules for bench experiments
+$(foreach e,$(EXPERIMENTS),$(eval $(if $(findstring _bench,$(call split-target,$e)),$(call BENCH_COMPILE_RULE,$(call split-target,$e),$(call split-source,$e)))))
 
-$(BIN_DIR)/frontier_test: $(frontier_test_OBJS) libcore_baseline.a libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+# Create object directory if missing
+$(OBJ_DIR):
+	mkdir -p $(OBJ_DIR)
 
-# ---- Benchmark variants (require Google Benchmark) ---------------------------
+# ==============================================================================
+# Linking rules with variable dependencies
+# ==============================================================================
+$(BIN_DIR)/dd_test $(BIN_DIR)/EURUSD_test $(BIN_DIR)/elect_test: $(BIN_DIR)/%: $(OBJ_DIR)/%$(OBJEXT) libcore.a | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-BENCH_HEADER := libs/benchmark/include/benchmark/benchmark.h
+$(BIN_DIR)/gridsearch_test $(BIN_DIR)/gridsearch_test_best $(BIN_DIR)/gridsearch_eurusd_test \
+$(BIN_DIR)/gridsearch_eurusd_test_best $(BIN_DIR)/frontier_test: $(BIN_DIR)/%: $(OBJ_DIR)/%$(OBJEXT) libcore_baseline.a libcore.a | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-ifneq ($(wildcard $(BENCH_HEADER)),)
+# Benchmark variants
+$(BIN_DIR)/gridsearch_test_best_bench $(BIN_DIR)/gridsearch_eurusd_test_best_bench: CPPFLAGS += -DFMT_HEADER_ONLY
 
-BENCH_CPPFLAGS := -Ilibs/benchmark/include -DFMT_HEADER_ONLY
-BENCH_LDFLAGS  := -Llibs/benchmark/build/src
-BENCH_LDLIBS   := -lbenchmark -lpthread
+$(BIN_DIR)/%_bench: $(OBJ_DIR)/%_bench.o libcore_baseline.a libcore.a | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(BENCH_LDFLAGS) $^ $(LDLIBS) -lbenchmark -lpthread -o $@
 
-# Apply benchmark includes to benchmark objects
-$(gridsearch_test_best_bench_OBJS): CPPFLAGS += $(BENCH_CPPFLAGS)
-$(gridsearch_eurusd_test_best_bench_OBJS): CPPFLAGS += $(BENCH_CPPFLAGS)
-
-$(BIN_DIR)/gridsearch_test_best_bench: $(gridsearch_test_best_bench_OBJS) libcore_baseline.a libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $(BENCH_LDFLAGS) $^ $(LDLIBS) $(BENCH_LDLIBS) -o $@
-
-$(BIN_DIR)/gridsearch_eurusd_test_best_bench: $(gridsearch_eurusd_test_best_bench_OBJS) libcore_baseline.a libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $(BENCH_LDFLAGS) $^ $(LDLIBS) $(BENCH_LDLIBS) -o $@
-
-else
-
-$(BIN_DIR)/gridsearch_test_best_bench:
-	@echo "Skipping gridsearch_test_best_bench: Google Benchmark not found (libs/benchmark/)"
-
-$(BIN_DIR)/gridsearch_eurusd_test_best_bench:
-	@echo "Skipping gridsearch_eurusd_test_best_bench: Google Benchmark not found (libs/benchmark/)"
-
-endif
-
-# --- SORF variants (same sources compiled with -DUSE_SORF) ------------------
-
-$(OBJ_DIR)/double_descent/dd_test_non_linear_sorf.o: \
-    $(EXP_DIR)/double_descent/dd_test_non_linear.cpp
+# ==============================================================================
+# SORF Compilation Rule
+# ==============================================================================
+$(OBJ_DIR)/%_sorf.o: $(EXP_DIR)/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DUSE_SORF -c $< -o $@
 
-$(OBJ_DIR)/EURUSD/test_EURUSD_sorf.o: \
-    $(EXP_DIR)/EURUSD/test_EURUSD.cpp
+$(OBJ_DIR)/double_descent/%_sorf.o: $(EXP_DIR)/double_descent/%.cpp
 	@mkdir -p $(@D)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DUSE_SORF -c $< -o $@
 
-$(OBJ_DIR)/electricity/test_elect_sorf.o: \
-    $(EXP_DIR)/electricity/test_elect.cpp
-	@mkdir -p $(@D)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DUSE_SORF -c $< -o $@
+$(BIN_DIR)/%_sorf: $(OBJ_DIR)/%_sorf.o libcore.a | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-$(BIN_DIR)/dd_test_sorf: $(OBJ_DIR)/double_descent/dd_test_non_linear_sorf.o libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+# ==============================================================================
+# Convenience phony targets
+# ==============================================================================
+.PHONY: all $(PROG_NAMES) $(addsuffix _sorf,$(SORF_NAMES)) gridsearch_test_best_bench gridsearch_eurusd_test_best_bench
 
-$(BIN_DIR)/EURUSD_test_sorf: $(OBJ_DIR)/EURUSD/test_EURUSD_sorf.o libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+all: $(EXPERIMENT_PROGS)
 
-$(BIN_DIR)/elect_test_sorf: $(OBJ_DIR)/electricity/test_elect_sorf.o libcore.a | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
+# Cleaned up short-hand rules so they don't loop endlessly or throw warnings
+$(PROG_NAMES): %: $(BIN_DIR)/%
+$(addsuffix _sorf,$(SORF_NAMES)): %: $(BIN_DIR)/%
 
-# --- Convenience aliases ----------------------------------------------------
-
-.PHONY: dd_test EURUSD_test elect_test gridsearch_test gridsearch_test_best gridsearch_eurusd_test gridsearch_eurusd_test_best frontier_test
-.PHONY: dd_test_sorf EURUSD_test_sorf elect_test_sorf
-.PHONY: gridsearch_test_best_bench gridsearch_eurusd_test_best_bench
-
-dd_test: $(BIN_DIR)/dd_test
-EURUSD_test: $(BIN_DIR)/EURUSD_test
-elect_test: $(BIN_DIR)/elect_test
-gridsearch_test: $(BIN_DIR)/gridsearch_test
-gridsearch_test_best: $(BIN_DIR)/gridsearch_test_best
-gridsearch_eurusd_test: $(BIN_DIR)/gridsearch_eurusd_test
-gridsearch_eurusd_test_best: $(BIN_DIR)/gridsearch_eurusd_test_best
-frontier_test: $(BIN_DIR)/frontier_test
-dd_test_sorf:     $(BIN_DIR)/dd_test_sorf
-EURUSD_test_sorf: $(BIN_DIR)/EURUSD_test_sorf
-elect_test_sorf:  $(BIN_DIR)/elect_test_sorf
-gridsearch_test_best_bench: $(BIN_DIR)/gridsearch_test_best_bench
-gridsearch_eurusd_test_best_bench: $(BIN_DIR)/gridsearch_eurusd_test_best_bench
-
-EXPERIMENT_PROGS := $(BIN_DIR)/dd_test $(BIN_DIR)/EURUSD_test $(BIN_DIR)/elect_test \
-                    $(BIN_DIR)/gridsearch_test $(BIN_DIR)/gridsearch_test_best \
-                    $(BIN_DIR)/gridsearch_eurusd_test $(BIN_DIR)/gridsearch_eurusd_test_best \
-                    $(BIN_DIR)/frontier_test \
-                    $(BIN_DIR)/dd_test_sorf $(BIN_DIR)/EURUSD_test_sorf $(BIN_DIR)/elect_test_sorf \
-                    $(BIN_DIR)/gridsearch_test_best_bench $(BIN_DIR)/gridsearch_eurusd_test_best_bench
-
-SORF_OBJS := $(OBJ_DIR)/double_descent/dd_test_non_linear_sorf.o \
-             $(OBJ_DIR)/EURUSD/test_EURUSD_sorf.o \
-             $(OBJ_DIR)/electricity/test_elect_sorf.o
-
+# ==============================================================================
+# Cleanup
+# ==============================================================================
 .PHONY: clean-experiments
 clean-experiments:
-	$(RM) $(EXPERIMENT_PROGS) $(dd_test_OBJS) $(EURUSD_test_OBJS) $(elect_test_OBJS) $(gridsearch_test_OBJS) \
-	$(gridsearch_test_best_OBJS) $(gridsearch_eurusd_test_OBJS) $(gridsearch_eurusd_test_best_OBJS) $(frontier_test_OBJS) \
-	$(SORF_OBJS)
+	$(RM) $(EXPERIMENT_PROGS) $(addprefix $(BIN_DIR)/,$(addsuffix _sorf,$(SORF_NAMES))) \
+	      $(addprefix $(BIN_DIR)/,$(addsuffix _bench,gridsearch_test_best gridsearch_eurusd_test_best))

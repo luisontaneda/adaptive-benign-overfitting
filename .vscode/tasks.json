@@ -5,13 +5,33 @@
       "label": "build",
       "type": "shell",
       "command": "make",
-      "args": ["debug"], // Builds the debug target in your Makefile
+      "args": [
+        "MODE=debug",
+        "${input:targetName}"
+      ],
       "group": {
         "kind": "build",
         "isDefault": true
       },
       "problemMatcher": ["$gcc"],
-      "detail": "Build the project using Makefile"
+      "detail": "Compiles the active target program with debugging flags."
+    }
+  ],
+  "inputs": [
+    {
+      "id": "targetName",
+      "type": "pickString",
+      "description": "Which target do you want to build and debug?",
+      "default": "gridsearch_eurusd_test_best_bench",
+      "options": [
+        "gridsearch_eurusd_test_best_bench",
+        "gridsearch_eurusd_test_best",
+        "gridsearch_test_best",
+        "gridsearch_test_best_bench",
+        "EURUSD_test",
+        "elect_test",
+        "dd_test"
+      ]
     }
   ]
 }

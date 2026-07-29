@@ -38,7 +38,7 @@ KRLS_RBF::KRLS_RBF(const double *X_init, const double *y_init, int n_obs,
 {
 
     // Pre-allocate all buffers to window_size_ capacity (no reallocation in hot path)
-    beta_ = new double[dim_]();
+    beta_ = new double[window_size_]();
     P_ = new double[window_size_ * window_size_]();
 
     // Allocate ring buffers (pre-allocated to window_size_)
@@ -55,13 +55,28 @@ KRLS_RBF::KRLS_RBF(const double *X_init, const double *y_init, int n_obs,
     if (X_init != nullptr && y_init != nullptr && n_obs_ > 0)
     {
         n_init_samples_ = n_obs_;
+        X_init_ = new double[window_size_ * dim_]();
         y_init_ = new double[n_obs_];
 
-        vectorCopy(X_, X_init, n_obs_ * dim_);
+        for (int j = 0; j < dim_; ++j)
+        {
+            for (int i = 0; i < n_obs_; ++i)
+            {
+                X_init_[i + j * window_size_] = X_init[i + j * n_obs_];
+                X_[i + j * window_size_] = X_init[i + j * n_obs_];
+            }
+        }
+        vectorCopy(y_init_, y_init, n_obs_);
         vectorCopy(y_, y_init, n_obs_);
 
-        // Copy initial batch to ring buffers
-        std::memcpy(X_ring_, X_init, n_obs_ * dim_ * sizeof(double));
+        // Copy initial batch to ring buffers in row-major order
+        for (int i = 0; i < n_obs_; ++i)
+        {
+            for (int j = 0; j < dim_; ++j)
+            {
+                X_ring_[i * dim_ + j] = X_init[i + j * n_obs_];
+            }
+        }
         std::memcpy(y_ring_, y_init, n_obs_ * sizeof(double));
         ring_idx_ = (n_obs_ % window_size_);
 
@@ -74,6 +89,7 @@ KRLS_RBF::KRLS_RBF(const double *X_init, const double *y_init, int n_obs,
 KRLS_RBF::~KRLS_RBF()
 {
     delete[] X_;
+    delete[] y_;
     delete[] beta_;
     delete[] P_;
     delete[] h_;
@@ -123,10 +139,10 @@ void KRLS_RBF::initializeFromBatch(const double *X, const double *y, int n_obs_)
         {
             const double *xi0 = &X[i];
 
-            K_[i + j * n_obs_] = kernel(xi0, n_obs_, xj0, n_obs_);
+            K_[i + j * window_size_] = kernel(xi0, window_size_, xj0, window_size_);
 
             if (i == j)
-                K_[i + j * n_obs_] += delta_;
+                K_[i + j * window_size_] += delta_;
         }
     }
 
@@ -134,7 +150,7 @@ void KRLS_RBF::initializeFromBatch(const double *X, const double *y, int n_obs_)
     pinv(K_, P_, n_obs_, n_obs_);
 
     cblas_dgemv(CblasColMajor, CblasNoTrans,
-                n_obs_, n_obs_, 1.0, P_, n_obs_, y_, 1, 0.0, beta_, 1);
+                n_obs_, n_obs_, 1.0, P_, window_size_, y_, 1, 0.0, beta_, 1);
 
     initialized_ = true;
 }
@@ -142,6 +158,12 @@ void KRLS_RBF::initializeFromBatch(const double *X, const double *y, int n_obs_)
 // Update with new sample
 void KRLS_RBF::update(const double *new_x, double new_y, double &prediction, double &error)
 {
+    // Remove the oldest sample when the buffer is full before adding a new one
+    if (n_obs_ == window_size_)
+    {
+        downdate();
+    }
+
     // Store new sample in ring buffers
     std::memcpy(&X_ring_[ring_idx_ * dim_], new_x, dim_ * sizeof(double));
     y_ring_[ring_idx_] = new_y;
@@ -149,8 +171,8 @@ void KRLS_RBF::update(const double *new_x, double new_y, double &prediction, dou
     // Compute h(i): vector of kernel evaluations with existing samples
     for (int j = 0; j < n_obs_; ++j)
     {
-        const double *xj0 = &X_[j * dim_]; // sample j, column-major stride
-        h_[j] = kernel(new_x, 1, xj0, 1);
+        const double *xj0 = &X_[j];
+        h_[j] = kernel(new_x, 1, xj0, window_size_);
 
         // Update K with new row/column
         K_[j + n_obs_ * window_size_] = h_[j]; // New row, old columns
@@ -163,8 +185,11 @@ void KRLS_RBF::update(const double *new_x, double new_y, double &prediction, dou
     prediction = cblas_ddot(n_obs_, h_, 1, beta_, 1);
     error = new_y - prediction;
 
-    // Store new X sample (append to pre-allocated buffer)
-    std::memcpy(&X_[n_obs_ * dim_], new_x, dim_ * sizeof(double));
+    // Store new X sample in column-major layout
+    for (int k = 0; k < dim_; ++k)
+    {
+        X_[n_obs_ + k * window_size_] = new_x[k];
+    }
 
     // Update of inverse matrix
     double P_b[window_size_];
@@ -186,13 +211,27 @@ void KRLS_RBF::update(const double *new_x, double new_y, double &prediction, dou
 
     n_obs_++;
 
+    // Update coefficients for the new augmented system
+    cblas_dgemv(CblasColMajor, CblasNoTrans,
+                n_obs_, n_obs_, 1.0, P_, window_size_, y_, 1, 0.0, beta_, 1);
+
     // Advance ring buffer position
     ring_idx_ = (ring_idx_ + 1) % window_size_;
+}
 
-    if (n_obs_ > window_size_)
+double KRLS_RBF::predict(const double *x) const
+{
+    if (n_obs_ <= 0)
+        return 0.0;
+
+    double prediction = 0.0;
+    for (int j = 0; j < n_obs_; ++j)
     {
-        downdate();
+        const double *xj0 = &X_[j];
+        double k = kernel(x, 1, xj0, window_size_);
+        prediction += beta_[j] * k;
     }
+    return prediction;
 }
 
 void KRLS_RBF::downdate()

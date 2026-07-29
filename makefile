@@ -16,11 +16,34 @@ $(OBJ_DIR)/%.o: tests/%.cpp
 $(BIN_DIR)/test_%: $(OBJ_DIR)/test_%.o libcore.a | $(BIN_DIR)
 	$(CXX) $(LDFLAGS) $^ $(LDLIBS) -o $@
 
-.PHONY: all experiments benchmarks libs baselines tests clean debug
+.PHONY: all experiments benchmarks libs baselines tests clean debug help check
 
 all: experiments benchmarks baselines
 
 tests: $(TEST_BINS)
+
+check: tests
+	@echo "Running unit tests..."
+	@for t in $(TEST_BINS); do \
+		printf "==> %s\n" "$$t"; \
+		"$$t" || exit 1; \
+	done
+
+help:
+	@echo "Available make targets:"
+	@echo "  make all         - Build experiments, benchmarks, and baselines"
+	@echo "  make experiments - Build experiment binaries"
+	@echo "  make benchmarks  - Build benchmark binaries"
+	@echo "  make baselines   - Build baseline binaries"
+	@echo "  make tests       - Build test binaries"
+	@echo "  make check       - Build and run unit tests"
+	@echo "  make clean       - Remove generated artifacts"
+	@echo "  make debug       - Build all with DEBUG=1"
+	@echo
+	@echo "Common makefile options:"
+	@echo "  MODE=debug      - Enable debug compilation mode"
+	@echo "  targetName      - Optional target name for build"
+	@echo
 
 # Convenience umbrella targets (also nice for `make experiments`)
 experiments: $(EXPERIMENT_PROGS)

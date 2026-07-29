@@ -7,6 +7,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -15,8 +16,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-// ---- data structures ----
 
 struct ModelParamsABO
 {
@@ -50,10 +49,6 @@ struct CommonParams
     int end_k = 5; // exclusive
     int val_length = 672 * 2;
     std::string out_csv = "results/gridsearch/electricity/best_test_bench.csv";
-
-    bool run_abo = true;
-    bool run_qrd = true;
-    bool run_krls = true;
 };
 
 struct Args
@@ -62,6 +57,12 @@ struct Args
     ModelParamsABO abo;
     ModelParamsQRD qrd;
     ModelParamsKRLS krls;
+};
+
+struct Stats
+{
+    double mse = 0.0;
+    double var = 0.0;
 };
 
 struct FoldResultRow
@@ -76,14 +77,20 @@ struct FoldResultRow
     double mse = std::numeric_limits<double>::quiet_NaN();
     double var = std::numeric_limits<double>::quiet_NaN();
 
-    double us_rff = 0.0; // ABO only
+    double us_rff = 0.0;
     double us_update = 0.0;
 
     double s_rff = 0.0;
     double s_update = 0.0;
 };
 
-// ---- helpers ----
+struct RawSeries
+{
+    std::vector<double> x;
+};
+
+static Args g_args;
+static Stats g_abo_stats, g_qrd_stats, g_krls_stats;
 
 static inline bool is_flag(const char *a, const char *b)
 {
@@ -100,44 +107,16 @@ static inline void parse_args(int argc, char **argv, Args &a)
                 throw std::runtime_error(std::string("Missing value for ") + flag);
         };
 
-        // ---- common ----
         if (is_flag(argv[i], "--first_date"))
         {
             need("--first_date");
             a.common.first_date = std::stoi(argv[++i]);
-        }
-        else if (is_flag(argv[i], "--start_k"))
-        {
-            need("--start_k");
-            a.common.start_k = std::stoi(argv[++i]);
-        }
-        else if (is_flag(argv[i], "--end_k"))
-        {
-            need("--end_k");
-            a.common.end_k = std::stoi(argv[++i]);
         }
         else if (is_flag(argv[i], "--val_length"))
         {
             need("--val_length");
             a.common.val_length = std::stoi(argv[++i]);
         }
-        else if (is_flag(argv[i], "--out_csv"))
-        {
-            need("--out_csv");
-            a.common.out_csv = argv[++i];
-        }
-        else if (is_flag(argv[i], "--run"))
-        {
-            need("--run");
-            std::string s = argv[++i];
-            auto has = [&](const std::string &key)
-            { return s.find(key) != std::string::npos; };
-            a.common.run_abo = has("abo");
-            a.common.run_qrd = has("qrd");
-            a.common.run_krls = has("krls");
-        }
-
-        // ---- ABO ----
         else if (is_flag(argv[i], "--abo_lags"))
         {
             need("--abo_lags");
@@ -163,8 +142,6 @@ static inline void parse_args(int argc, char **argv, Args &a)
             need("--abo_log2D");
             a.abo.log2D = std::stoi(argv[++i]);
         }
-
-        // ---- QRD ----
         else if (is_flag(argv[i], "--qrd_lags"))
         {
             need("--qrd_lags");
@@ -175,8 +152,6 @@ static inline void parse_args(int argc, char **argv, Args &a)
             need("--qrd_window");
             a.qrd.W = std::stoi(argv[++i]);
         }
-
-        // ---- KRLS ----
         else if (is_flag(argv[i], "--krls_lags"))
         {
             need("--krls_lags");
@@ -196,48 +171,16 @@ static inline void parse_args(int argc, char **argv, Args &a)
 
     if (a.abo.log2D >= 0)
         a.abo.D = 1 << a.abo.log2D;
-
-    if (a.common.end_k <= a.common.start_k)
-        throw std::runtime_error("--end_k must be > --start_k");
-
-    if (!a.common.run_abo && !a.common.run_qrd && !a.common.run_krls)
-        throw std::runtime_error("--run must include at least one of: abo,qrd,krls");
-
-    if (a.common.run_abo)
-    {
-        if (a.abo.L <= 0 || a.abo.W <= 0 || a.abo.sigma <= 0.0 || a.abo.D <= 0)
-            throw std::runtime_error("ABO needs --abo_lags --abo_window --abo_sigma and --abo_D/--abo_log2D");
-    }
-    if (a.common.run_qrd)
-    {
-        if (a.qrd.L <= 0 || a.qrd.W <= 0)
-            throw std::runtime_error("QRD needs --qrd_lags --qrd_window");
-    }
-    if (a.common.run_krls)
-    {
-        if (a.krls.L <= 0 || a.krls.W <= 0 || a.krls.sigma <= 0.0)
-            throw std::runtime_error("KRLS needs --krls_lags --krls_window --krls_sigma");
-    }
 }
 
-static inline void lag_matrix(
-    const std::vector<double> &x,
-    int lag,
-    std::vector<std::vector<double>> &X_lag,
-    std::vector<double> &y)
+static inline void lag_matrix(const std::vector<double> &x, int lag, std::vector<std::vector<double>> &X_lag, std::vector<double> &y)
 {
     const int T = static_cast<int>(x.size());
     const int N = T - lag;
     if (N <= 0)
-    {
-        X_lag.clear();
-        y.clear();
         return;
-    }
-
     X_lag.assign(N, std::vector<double>(lag));
     y.assign(N, 0.0);
-
     for (int i = 0; i < N; ++i)
     {
         for (int j = 0; j < lag; ++j)
@@ -246,54 +189,41 @@ static inline void lag_matrix(
     }
 }
 
-static inline void dataset_creation(
-    std::vector<std::vector<double>> &data_set,
-    std::vector<double> &target_data,
-    Eigen::MatrixXd &initial_matrix,
-    Eigen::MatrixXd &update_matrix,
-    double *y,
-    double *&y_update,
-    int num_rows,
-    int num_cols,
-    int start_row)
+static inline void dataset_creation(std::vector<std::vector<double>> &data_set, std::vector<double> &target_data, Eigen::MatrixXd &initial_matrix, Eigen::MatrixXd &update_matrix, double *y, double *&y_update, int num_rows, int num_cols, int start_row)
 {
-    const int remaining = static_cast<int>(target_data.size()) - start_row;
-    const int num_elements = remaining - num_rows;
-
-    if (num_elements <= 0)
-    {
-        y_update = nullptr;
-        initial_matrix.resize(0, 0);
-        update_matrix.resize(0, 0);
-        return;
-    }
-
-    Eigen::Map<Eigen::VectorXd> y_old(target_data.data() + start_row, num_rows);
-    Eigen::Map<Eigen::VectorXd> y_update_old(target_data.data() + start_row + num_rows, num_elements);
-
     for (int i = 0; i < num_rows; ++i)
-        y[i] = y_old(i);
-
-    y_update = new double[num_elements];
-    for (int i = 0; i < num_elements; ++i)
-        y_update[i] = y_update_old(i);
-
-    const int len_data_set = static_cast<int>(data_set.size());
-    const int n_rows_mat = len_data_set - start_row;
-    if (n_rows_mat <= num_rows)
-    {
-        initial_matrix.resize(0, 0);
-        update_matrix.resize(0, 0);
-        return;
-    }
-
-    Eigen::MatrixXd close_lag_mat(n_rows_mat, num_cols);
+        y[i] = target_data[start_row + i];
+    int remaining = static_cast<int>(target_data.size()) - (start_row + num_rows);
+    y_update = new double[remaining];
+    for (int i = 0; i < remaining; ++i)
+        y_update[i] = target_data[start_row + num_rows + i];
+    int n_rows_mat = static_cast<int>(data_set.size()) - start_row;
+    Eigen::MatrixXd mat(n_rows_mat, num_cols);
     for (int i = 0; i < n_rows_mat; ++i)
         for (int j = 0; j < num_cols; ++j)
-            close_lag_mat(i, j) = data_set[i + start_row][j];
+            mat(i, j) = data_set[i + start_row][j];
+    initial_matrix = mat.block(0, 0, num_rows, num_cols);
+    update_matrix = mat.block(num_rows, 0, n_rows_mat - num_rows, num_cols);
+}
 
-    initial_matrix = close_lag_mat.block(0, 0, num_rows, num_cols);
-    update_matrix = close_lag_mat.block(num_rows, 0, close_lag_mat.rows() - num_rows, num_cols);
+static Stats calculate_stats(const std::vector<double> &errors)
+{
+    if (errors.empty())
+        return {0.0, 0.0};
+    double sum_sq = 0.0, sum = 0.0;
+    for (double e : errors)
+    {
+        sum += e;
+        sum_sq += (e * e);
+    }
+    double mse = sum_sq / errors.size();
+    double mean = sum / errors.size();
+    double var_sum = 0.0;
+    for (double e : errors)
+        var_sum += std::pow(e - mean, 2);
+    if (errors.size() == 1)
+        return {mse, 0.0};
+    return {mse, var_sum / (errors.size() - 1)};
 }
 
 static inline void get_var(const std::vector<double> &se, double mean_se, double &var, int n)
@@ -306,22 +236,13 @@ static inline void get_var(const std::vector<double> &se, double mean_se, double
     }
 }
 
-// ---- data loader (cached globally) ----
-
-struct RawSeries
-{
-    std::vector<double> x;
-};
-
 static RawSeries &get_series()
 {
     static RawSeries s;
     static bool loaded = false;
     if (!loaded)
     {
-        std::vector<std::vector<std::string>> raw_data =
-            read_csv_func("data/electricity/raw_norm_LD2011_2014.csv");
-
+        std::vector<std::vector<std::string>> raw_data = read_csv_func("data/electricity/raw_norm_LD2011_2014.csv");
         const int len_raw_data = static_cast<int>(raw_data.size()) - 1;
         s.x.reserve(std::max(0, len_raw_data - 1));
         for (int i = 1; i < len_raw_data; ++i)
@@ -330,8 +251,6 @@ static RawSeries &get_series()
     }
     return s;
 }
-
-// ---- per-fold benchmarks (simplified, timed parts only) ----
 
 static inline FoldResultRow run_fold_abo_bench(
     const RawSeries &series,
@@ -385,7 +304,6 @@ static inline FoldResultRow run_fold_abo_bench(
 
     ABO abo(X.data(), y, W, ff, D, W);
 
-    // Ring buffer
     std::vector<std::vector<double>> X_raw_ring(W, std::vector<double>(L));
     std::vector<double> y_ring(W, 0.0);
     for (int ri = 0; ri < W; ri++)
@@ -405,13 +323,10 @@ static inline FoldResultRow run_fold_abo_bench(
 
     for (int i = 0; i < n_its; ++i)
     {
-        // Transform step (optional timing in benchmark)
         MatrixXd X_up = g_rff.transform(update_matrix.row(i));
-
         for (int j = 0; j < D; ++j)
             X_update[static_cast<size_t>(j)] = X_up(0, j);
 
-        // Downdate oldest
         if (abo.n_obs_ == W)
         {
             MatrixXd raw_old_mat(1, L);
@@ -425,13 +340,10 @@ static inline FoldResultRow run_fold_abo_bench(
         }
 
         double pred = abo.pred(X_update.data());
-
-        // Update ring buffer
-        for (int j = 0; j < L; j++)
+        for (int j = 0; j < L; ++j)
             X_raw_ring[ring_idx][j] = update_matrix(i, j);
         y_ring[ring_idx] = y_update[i];
         ring_idx = (ring_idx + 1) % W;
-
         abo.update(X_update.data(), y_update[i]);
 
         double e = pred - y_update[i];
@@ -477,7 +389,6 @@ static inline FoldResultRow run_fold_qrd_bench(
     double *y_update = nullptr;
 
     const int start_row = first_date + val_length * fold_k;
-
     dataset_creation(data_set, target_data, initial_matrix, update_matrix,
                      y, y_update, W, L, start_row);
 
@@ -501,15 +412,12 @@ static inline FoldResultRow run_fold_qrd_bench(
 
     double se_sum = 0.0;
     const int n_its = val_length;
-
     for (int i = 0; i < n_its; ++i)
     {
         for (int j = 0; j < L; ++j)
             x_no_rff[static_cast<size_t>(j)] = update_matrix(i, j);
-
         double pred = 0.0, eps_post = 0.0;
         qrd.update(x_no_rff.data(), y_update[i], pred, eps_post);
-
         double r2 = eps_post * eps_post;
         se_sum += r2;
         se.push_back(r2);
@@ -521,7 +429,6 @@ static inline FoldResultRow run_fold_qrd_bench(
 
     row.mse = mean_se;
     row.var = var_se / (n_its - 1);
-
     delete[] y_update;
     return row;
 }
@@ -554,7 +461,6 @@ static inline FoldResultRow run_fold_krls_bench(
     double *y_update = nullptr;
 
     const int start_row = first_date + val_length * fold_k;
-
     dataset_creation(data_set, target_data, initial_matrix, update_matrix,
                      y, y_update, W, L, start_row);
 
@@ -568,7 +474,6 @@ static inline FoldResultRow run_fold_krls_bench(
     for (int j = 0; j < L; ++j)
         for (int i = 0; i < W; ++i)
             X_no_rff[static_cast<size_t>(i) + static_cast<size_t>(j) * static_cast<size_t>(W)] = initial_matrix(i, j);
-
     const double temp_sigma = 1.0 / sigma;
     KRLS_RBF krls(X_no_rff.data(), y, W, L, regularizer, temp_sigma, W);
 
@@ -578,15 +483,12 @@ static inline FoldResultRow run_fold_krls_bench(
 
     double se_sum = 0.0;
     const int n_its = val_length;
-
     for (int i = 0; i < n_its; ++i)
     {
         for (int j = 0; j < L; ++j)
             x_no_rff[static_cast<size_t>(j)] = update_matrix(i, j);
-
         double pred = 0.0, eps_post = 0.0;
         krls.update(x_no_rff.data(), y_update[i], pred, eps_post);
-
         double r2 = eps_post * eps_post;
         se_sum += r2;
         se.push_back(r2);
@@ -598,91 +500,156 @@ static inline FoldResultRow run_fold_krls_bench(
 
     row.mse = mean_se;
     row.var = var_se / (n_its - 1);
-
     delete[] y_update;
     return row;
 }
 
-// ---- global state for benchmarks ----
-
-static Args g_args;
-
-// ---- Google Benchmark functions ----
-
-static void BM_ABO_Fold(benchmark::State &state)
+static void BM_ABO_Update(benchmark::State &state)
 {
     const RawSeries &series = get_series();
+    int L = g_args.abo.L, W = g_args.abo.W, D = g_args.abo.D;
+    double sigma = g_args.abo.sigma, ff = g_args.abo.ff;
+    int val_length = g_args.common.val_length;
+
+    std::vector<std::vector<double>> data_set;
+    std::vector<double> target_data;
+    lag_matrix(series.x, L, data_set, target_data);
+
+    Eigen::MatrixXd initial_matrix, update_matrix;
+    std::vector<double> y_vec(W);
+    double *y_update = nullptr;
+    dataset_creation(data_set, target_data, initial_matrix, update_matrix, y_vec.data(), y_update, W, L, g_args.common.first_date);
+
+    GaussianRFF g_rff(L, D, sigma, 0);
+    Eigen::MatrixXd X_old = g_rff.transform_matrix(initial_matrix);
+    std::vector<double> X_flat(W * D);
+    for (int j = 0; j < D; ++j)
+        for (int i = 0; i < W; ++i)
+            X_flat[i + j * W] = X_old(i, j);
+
+    ABO abo(X_flat.data(), y_vec.data(), W, ff, D, W);
+    std::vector<std::vector<double>> X_raw_ring(W, std::vector<double>(L));
+    for (int ri = 0; ri < W; ri++)
+        for (int j = 0; j < L; ++j)
+            X_raw_ring[ri][j] = initial_matrix(ri, j);
+    int ring_idx = 0;
+
+    std::vector<double> errors;
+    errors.reserve(val_length);
 
     for (auto _ : state)
     {
-        FoldResultRow r = run_fold_abo_bench(series,
-                                             g_args.common.first_date, 0,
-                                             g_args.abo.W, g_args.abo.L,
-                                             g_args.abo.sigma, g_args.abo.D,
-                                             g_args.common.val_length,
-                                             g_args.abo.ff, g_args.abo.regularizer);
-        benchmark::DoNotOptimize(r);
+        errors.clear();
+        for (int i = 0; i < val_length; ++i)
+        {
+            Eigen::MatrixXd X_up_mat = g_rff.transform(update_matrix.row(i));
+            if (abo.n_obs_ == W)
+            {
+                Eigen::MatrixXd raw_old_mat(1, L);
+                for (int j = 0; j < L; ++j)
+                    raw_old_mat(0, j) = X_raw_ring[ring_idx][j];
+                Eigen::MatrixXd z_old_mat = g_rff.transform(raw_old_mat);
+                abo.downdate(z_old_mat.data());
+            }
+            double pred = abo.pred(X_up_mat.data());
+            errors.push_back(y_update[i] - pred);
+            for (int j = 0; j < L; ++j)
+                X_raw_ring[ring_idx][j] = update_matrix(i, j);
+            ring_idx = (ring_idx + 1) % W;
+            abo.update(X_up_mat.data(), y_update[i]);
+        }
     }
-
-    state.SetLabel(fmt::format("L={},W={},sigma={},D={}",
-                               g_args.abo.L, g_args.abo.W, g_args.abo.sigma, g_args.abo.D));
+    g_abo_stats = calculate_stats(errors);
+    state.SetItemsProcessed(state.iterations() * val_length);
+    delete[] y_update;
 }
 
-static void BM_QRD_Fold(benchmark::State &state)
+static void BM_QRD_Update(benchmark::State &state)
 {
     const RawSeries &series = get_series();
+    int L = g_args.qrd.L, W = g_args.qrd.W, val_length = g_args.common.val_length;
+    double ff = g_args.qrd.ff, reg = g_args.qrd.regularizer;
+
+    std::vector<std::vector<double>> data_set;
+    std::vector<double> target_data;
+    lag_matrix(series.x, L, data_set, target_data);
+
+    Eigen::MatrixXd initial_matrix, update_matrix;
+    std::vector<double> y_vec(W);
+    double *y_update = nullptr;
+    dataset_creation(data_set, target_data, initial_matrix, update_matrix, y_vec.data(), y_update, W, L, g_args.common.first_date);
+
+    QRDRLS qrd(W, L, ff, reg);
+    std::vector<double> X_flat(W * L);
+    for (int j = 0; j < L; ++j)
+        for (int i = 0; i < W; ++i)
+            X_flat[i + j * W] = initial_matrix(i, j);
+    qrd.batchInitialize(X_flat.data(), y_vec.data(), W, L);
+
+    std::vector<double> row_vec(L), errors;
+    errors.reserve(val_length);
 
     for (auto _ : state)
     {
-        FoldResultRow r = run_fold_qrd_bench(series,
-                                             g_args.common.first_date, 0,
-                                             g_args.qrd.W, g_args.qrd.L,
-                                             g_args.common.val_length,
-                                             g_args.qrd.ff, g_args.qrd.regularizer);
-        benchmark::DoNotOptimize(r);
+        errors.clear();
+        for (int i = 0; i < val_length; ++i)
+        {
+            for (int j = 0; j < L; ++j)
+                row_vec[j] = update_matrix(i, j);
+            double p, e;
+            qrd.update(row_vec.data(), y_update[i], p, e);
+            errors.push_back(e);
+        }
     }
-
-    state.SetLabel(fmt::format("L={},W={}", g_args.qrd.L, g_args.qrd.W));
+    g_qrd_stats = calculate_stats(errors);
+    state.SetItemsProcessed(state.iterations() * val_length);
+    delete[] y_update;
 }
 
-static void BM_KRLS_Fold(benchmark::State &state)
+static void BM_KRLS_Update(benchmark::State &state)
 {
     const RawSeries &series = get_series();
+    int L = g_args.krls.L, W = g_args.krls.W, val_length = g_args.common.val_length;
+    double sigma = g_args.krls.sigma, reg = g_args.krls.regularizer;
+
+    std::vector<std::vector<double>> data_set;
+    std::vector<double> target_data;
+    lag_matrix(series.x, L, data_set, target_data);
+
+    Eigen::MatrixXd initial_matrix, update_matrix;
+    std::vector<double> y_vec(W);
+    double *y_update = nullptr;
+    dataset_creation(data_set, target_data, initial_matrix, update_matrix, y_vec.data(), y_update, W, L, g_args.common.first_date);
+
+    std::vector<double> X_flat(W * L);
+    for (int j = 0; j < L; ++j)
+        for (int i = 0; i < W; ++i)
+            X_flat[i + j * W] = initial_matrix(i, j);
+    KRLS_RBF krls(X_flat.data(), y_vec.data(), W, L, reg, sigma, W);
+
+    std::vector<double> row_vec(L), errors;
+    errors.reserve(val_length);
 
     for (auto _ : state)
     {
-        FoldResultRow r = run_fold_krls_bench(series,
-                                              g_args.common.first_date, 0,
-                                              g_args.krls.W, g_args.krls.L,
-                                              g_args.krls.sigma,
-                                              g_args.common.val_length,
-                                              g_args.krls.ff, g_args.krls.regularizer);
-        benchmark::DoNotOptimize(r);
+        errors.clear();
+        for (int i = 0; i < val_length; ++i)
+        {
+            for (int j = 0; j < L; ++j)
+                row_vec[j] = update_matrix(i, j);
+            double p, e;
+            krls.update(row_vec.data(), y_update[i], p, e);
+            errors.push_back(e);
+        }
     }
-
-    state.SetLabel(fmt::format("L={},W={},sigma={}", g_args.krls.L, g_args.krls.W, g_args.krls.sigma));
+    g_krls_stats = calculate_stats(errors);
+    state.SetItemsProcessed(state.iterations() * val_length);
+    delete[] y_update;
 }
 
-// Register benchmarks
-BENCHMARK(BM_ABO_Fold)
-    ->MinTime(2.0)
-    ->Iterations(1)
-    ->MeasureProcessCPUTime()
-    ->UseRealTime();
-
-BENCHMARK(BM_QRD_Fold)
-    ->MinTime(2.0)
-    ->Iterations(1)
-    ->MeasureProcessCPUTime()
-    ->UseRealTime();
-
-BENCHMARK(BM_KRLS_Fold)
-    ->MinTime(2.0)
-    ->Iterations(1)
-    ->MeasureProcessCPUTime()
-    ->UseRealTime();
-
-// ---- main for running benchmarks ----
+BENCHMARK(BM_ABO_Update)->Unit(benchmark::kMillisecond)->Repetitions(10)->DisplayAggregatesOnly(true)->UseRealTime();
+BENCHMARK(BM_QRD_Update)->Unit(benchmark::kMillisecond)->Repetitions(10)->DisplayAggregatesOnly(true)->UseRealTime();
+BENCHMARK(BM_KRLS_Update)->Unit(benchmark::kMillisecond)->Repetitions(10)->DisplayAggregatesOnly(true)->UseRealTime();
 
 int main(int argc, char **argv)
 {
@@ -692,28 +659,21 @@ int main(int argc, char **argv)
     }
     catch (const std::exception &e)
     {
-        std::cerr << "Arg error: " << e.what() << "\n\n";
-        std::cerr
-            << "Example:\n"
-            << "  ./best_test_bench \\\n"
-            << "    --run abo,qrd,krls \\\n"
-            << "    --first_date 5376 --start_k 0 --end_k 5 --val_length 1344 \\\n"
-            << "    --abo_lags 19 --abo_window 20 --abo_sigma 6.50586 --abo_log2D 11 \\\n"
-            << "    --qrd_lags 48 --qrd_window 128 \\\n"
-            << "    --krls_lags 25 --krls_window 261 --krls_sigma 4.2 \\\n"
-            << "    --out_csv results/gridsearch/electricity/best_test_bench.csv\n";
+        std::cerr << "Arg error: " << e.what() << "\n";
         return 1;
     }
 
-    // Pre-load data
     get_series();
-
-    // Run Google Benchmark with proper configuration
     ::benchmark::Initialize(&argc, argv);
-    if (::benchmark::ReportUnrecognizedArguments(argc, argv))
-        return 1;
     ::benchmark::RunSpecifiedBenchmarks();
-    ::benchmark::Shutdown();
+
+    std::cout << "\n" << std::string(60, '=') << "\n";
+    std::cout << fmt::format("{:<15} | {:<20} | {:<20}\n", "Method", "MSE", "Variance");
+    std::cout << std::string(60, '-') << "\n";
+    std::cout << fmt::format("{:<15} | {:<20.10f} | {:<20.10f}\n", "ABO", g_abo_stats.mse, g_abo_stats.var);
+    std::cout << fmt::format("{:<15} | {:<20.10f} | {:<20.10f}\n", "QRD-RLS", g_qrd_stats.mse, g_qrd_stats.var);
+    std::cout << fmt::format("{:<15} | {:<20.10f} | {:<20.10f}\n", "KRLS-RBF", g_krls_stats.mse, g_krls_stats.var);
+    std::cout << std::string(60, '=') << std::endl;
 
     return 0;
 }

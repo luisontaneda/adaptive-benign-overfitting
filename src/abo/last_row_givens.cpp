@@ -64,58 +64,11 @@ namespace givens
       double *R_inv = abo->R_inv_;
       double *h     = abo->scratch_n_;  // n_obs-length working vector
 
-      // Step 1: populate h
-      if (dim >= n_obs)
-      {
-         // Overparameterized or exactly determined: h = R_inv^T * z_old
-         // Since Z = QR and Q is n_obs x n_obs, and R is n_obs x dim,
-         // z_1^T = q_1^T R  => q_1^T = z_1^T R^dagger = z_1^T R_inv
-         cblas_dgemv(CblasColMajor, CblasTrans,
+      cblas_dgemv(CblasColMajor, CblasTrans,
                      dim, n_obs, 1.0,
                      R_inv, dim, z_old, 1, 0.0, h, 1);
-      }
-      else
-      {
-         // Underparameterized: R is n_obs x dim (tall).
-         // We need the first row of Q (n_obs x n_obs).
-         // We can find it by realizing that Q^T Z = R (upper triangular).
-         // This is equivalent to applying the same rotations to I that were 
-         // applied to Z to get R.
-         // However, we don't have Q. But we know that the first n_obs-dim
-         // elements of the first row of Q are zeroed out by the same rotations 
-         // that zeroed out the first columns of Z below the diagonal.
-         
-         // For now, let's use the property that z_1 = R^T q_1.
-         // Since R is full rank (dim), we can solve for the first dim components 
-         // of q_1. The remaining n_obs - dim components are determined by 
-         // the orthogonality of Q and the fact that they zero out the "extra" 
-         // rows of Z.
-         
-         // Actually, a simpler way in the old regime (dim <= n_obs) is to 
-         // just keep the first row of Q if we had it. Since we don't, 
-         // we can recreate it by applying the rotations to e_1.
-         // But wait, the "old" implementation DID have Q_.
-         
-         // If we want to be TRULY Q-less, we should avoid Q even in the old regime.
-         // Let's re-examine the old regime downdate in ABOOld.
-         // It used h = R_inv * G_e_1 and k = R_inv^T * x_T.
-         // This is actually the same math as the new regime, just swapping h and k roles.
-         
-         // Let's try to match the ABO_old.cpp logic exactly for the comparison.
-         // In the underparameterized regime, h was R_inv * G_e_1.
-         // But G_e_1 comes FROM the rotations that zero out the first row of Q.
-         // This is a bit of a circular dependency if we don't have Q.
-         
-         // Re-reading the ABO paper or the "initial_plans.md":
-         // "h is the first row of Q... h^T = z_old^T R^dagger".
-         // This formula h = R_inv^T * z_old SHOULD work for both if R_inv is the pseudo-inverse.
-         
-         std::memcpy(h, z_old, dim * sizeof(double));
-         cblas_dtrsv(CblasColMajor, CblasUpper, CblasTrans, CblasNonUnit, 
-                        dim, R, abo->max_obs_, h, 1);
-      }
 
-      // 3. Place the residual in the first 'empty' slot of the h vector
+      // Place the residual in the first 'empty' slot of the h vector
       // This completes the first row of Q (q1)
       if (dim < n_obs) {
          // 2. Find the norm of the 'known' part

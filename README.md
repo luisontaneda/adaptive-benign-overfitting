@@ -22,16 +22,36 @@ This repository accompanies ongoing research on **double descent**, **numerical 
 
 ## Build
 
+Prerequisites:
+- GNU Make
+- C++ compiler with C++17 support
+- Eigen 3
+- Git Large File Storage (Git LFS) for datasets
+
 Compile all experiments with:
 
 ```bash
 make -j
 ```
 
+Use `make help` for available targets:
+
+```bash
+make help
+```
+
 Compiled binaries are placed in:
 
 ```text
 bin/
+```
+
+## Tests
+
+Build and run unit tests with:
+
+```bash
+make check
 ```
 
 ---
@@ -63,6 +83,20 @@ data/EURUSD/raw_norm_EURUSD.csv
 ```
 
 This file is tracked using **Git LFS**.
+
+Additional EUR/USD data may be stored in `data/EURUSD/`. If you add local or minute-level files, keep them in `data/EURUSD/` and do not commit them unless they are intended as shared inputs.
+
+Before cloning, install Git LFS:
+
+```bash
+git lfs install
+```
+
+After cloning the repository, fetch the tracked data files:
+
+```bash
+git lfs pull
+```
 
 ---
 

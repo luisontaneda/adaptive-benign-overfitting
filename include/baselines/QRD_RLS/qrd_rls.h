@@ -26,7 +26,7 @@ public:
                 double &prediction,
                 double &error);
 
-    void downdate();
+    void downdate(const double *x_oldest, double y_oldest);
 
     void getCoefficients(double *w_out) const;
 

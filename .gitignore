@@ -1,14 +1,38 @@
+# Build directories and generated object files
 obj/
 bin/
+obj/*
+bin/*
 *.o
 *.a
-obj/*.o
-bin/*
-obj/*
+*.d
 
-# Ignore logs and temp files
+# Build artifacts
+libcore_baseline.a
+libcore.a
+libs/lapack/
+make.zip
+tree.out
+
+# Generated experiment outputs
+results/gridsearch/EURUSD/mse_var_grid_*
+
+# Python / notebook artifacts
+__pycache__/
+*.pyc
+*.ipynb_checkpoints/
+
+# Temporary and editor files
 *.log
 *.tmp
+*.swp
+*~
+.DS_Store
+* copy.json
+* copy.cpp
+* copy.*
+
+# Ignore logs and temp files
 logs/bin/
 timing_test
 make/local.mk
@@ -16,7 +40,3 @@ new_version_timing.txt
 old_version_timing.txt
 remove_o_and_exe_from_repo.md
 status.md
-
-libcore_baseline.a
-libcore.a
-libs/lapack/

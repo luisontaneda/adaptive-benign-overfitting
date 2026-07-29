@@ -99,8 +99,10 @@ QRDRLS::QRDRLS(int max_obs, int dim_, double forgetting_factor, double delta)
     // Allocate ring buffer and working arrays at full capacity
     X_ring_ = new double[max_obs_ * dim_]();
     y_ring_ = new double[max_obs_]();
-    X_ = new double[max_obs_ * dim_]();
-    y_ = new double[max_obs_]();
+
+    // Allocate an extra row for the append-then-downdate update path
+    X_ = new double[(max_obs_ + 1) * dim_]();
+    y_ = new double[max_obs_ + 1]();
 }
 
 QRDRLS::~QRDRLS()
@@ -122,13 +124,20 @@ void QRDRLS::batchInitialize(const double *X_batch, const double *y_batch, int b
     std::memcpy(y_ring_, y_batch, batch_size * sizeof(double));
     ring_idx_ = (batch_size % max_obs_);
 
-    // Copy batch data to pre-allocated buffers
-    std::memcpy(X_, X_batch, batch_size * dim_ * sizeof(double));
+    // Copy batch data to pre-allocated buffers.
+    // X_ uses columns of stride max_obs_+1 so appended row can stay in the buffer.
+    for (int j = 0; j < dim_; ++j)
+    {
+        for (int i = 0; i < batch_size; ++i)
+        {
+            X_[i + j * (max_obs_ + 1)] = X_batch[i + j * batch_size];
+        }
+    }
     std::memcpy(y_, y_batch, batch_size * sizeof(double));
 
-    // Compute Q and R from X_ (using our copy to avoid const issues)
+    // Compute Q and R from the original contiguous batch data.
     double *Q_temp, *R_temp;
-    std::tie(Q_temp, R_temp) = Q_R_compute(X_, batch_size, dim_);
+    std::tie(Q_temp, R_temp) = Q_R_compute(const_cast<double *>(X_batch), batch_size, dim_);
 
     // Compute P = (R^T)^{-1}
     double *P_temp = new double[batch_size * dim_];
@@ -158,6 +167,15 @@ void QRDRLS::batchInitialize(const double *X_batch, const double *y_batch, int b
 
 void QRDRLS::update(const double *new_x, double new_y, double &prediction, double &error)
 {
+    double x_oldest[dim_];
+    double y_oldest = 0.0;
+    bool window_full = (n_obs_ == max_obs_);
+    if (window_full)
+    {
+        std::memcpy(x_oldest, &X_ring_[ring_idx_ * dim_], dim_ * sizeof(double));
+        y_oldest = y_ring_[ring_idx_];
+    }
+
     // Store new sample in ring buffers
     std::memcpy(&X_ring_[ring_idx_ * dim_], new_x, dim_ * sizeof(double));
     y_ring_[ring_idx_] = new_y;
@@ -194,8 +212,12 @@ void QRDRLS::update(const double *new_x, double new_y, double &prediction, doubl
         UT_[i * dim_p_1 + dim_] = 0;
     }
 
-    // Append new X sample and y to pre-allocated buffer (no reallocation)
-    std::memcpy(&X_[n_obs_ * dim_], new_x, dim_ * sizeof(double));
+    // Append new X sample and y to pre-allocated buffer in column-major layout.
+    // Use max_obs_+1 as the stride because X_ stores one extra row for the append/downdate path.
+    for (int j = 0; j < dim_; ++j)
+    {
+        X_[n_obs_ + j * (max_obs_ + 1)] = new_x[j];
+    }
     y_[n_obs_] = new_y;
 
     n_obs_++;
@@ -205,20 +227,17 @@ void QRDRLS::update(const double *new_x, double new_y, double &prediction, doubl
 
     if (n_obs_ > max_obs_)
     {
-        downdate();
+        downdate(x_oldest, y_oldest);
     }
 }
 
-void QRDRLS::downdate()
+void QRDRLS::downdate(const double *x_oldest, double y_oldest)
 {
-    // Retrieve the oldest sample from ring buffer (at current ring_idx_ position)
-    double x_oldest[dim_];
-    std::memcpy(x_oldest, &X_ring_[ring_idx_ * dim_], dim_ * sizeof(double));
-
+    // The oldest sample is supplied by the caller and preserved before the ring buffer overwrite.
     double x_T[dim_];
     for (int i = 0; i < dim_; ++i)
     {
-        x_T[i] = X_[i * max_obs_]; // Copy the first row (column-major stride)
+        x_T[i] = X_[i * (max_obs_ + 1)]; // Copy the first row (column-major stride)
     }
 
     int dim_p_1 = dim_ + 1;
@@ -277,7 +296,7 @@ void QRDRLS::downdate()
     {
         for (int i = 0; i < n_obs_ - 1; ++i)
         {
-            X_[i + j * max_obs_] = X_[i + 1 + j * max_obs_];
+            X_[i + j * (max_obs_ + 1)] = X_[i + 1 + j * (max_obs_ + 1)];
         }
     }
 
@@ -301,4 +320,9 @@ void QRDRLS::reset()
     std::memset(beta_, 0, (n_obs_ + 1) * sizeof(double));
     std::memset(UT_, 0, (n_obs_ + 1) * (n_obs_ + 1) * sizeof(double));
     initialized_ = false;
+}
+
+void QRDRLS::getCoefficients(double *w_out) const
+{
+    std::memcpy(w_out, beta_, dim_ * sizeof(double));
 }

@@ -2,62 +2,47 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug Benchmark Crash",
-      "type": "cppdbg",
+      "name": "Super Fast General Debugger",
+      "type": "lldb",
       "request": "launch",
-      "program": "${workspaceFolder}/bin/gridsearch_eurusd_test_best_bench",
+      "program": "${workspaceFolder}/bin/${input:targetName}",
       "args": [
-        "--first_date",
-        "7680",
-        "--val_length",
-        "1920",
-        "--start_k",
-        "0",
-        "--end_k",
-        "5",
-        "--run",
-        "abo,qrd,krls",
-        "--abo_lags",
-        "20",
-        "--abo_window",
-        "21",
-        "--abo_sigma",
-        "8.0",
-        "--abo_log2D",
-        "13",
-        "--qrd_lags",
-        "20",
-        "--qrd_window",
-        "272",
-        "--krls_lags",
-        "20",
-        "--krls_window",
-        "421",
-        "--krls_sigma",
-        "3.125"
+        "--first_date", "5376",
+        "--val_length", "1344",
+        "--start_k", "0",
+        "--end_k", "5",
+        "--run", "abo,qrd,krls",
+        //"--run", "krls",
+        "--abo_lags", "20",
+        "--abo_window", "22",
+        "--abo_sigma", "6.5",
+        "--abo_log2D", "13",
+        "--qrd_lags", "20",
+        "--qrd_window", "272",
+        "--krls_lags", "20",
+        "--krls_window", "761",
+        //"--krls_sigma", "3.125"
+        "--krls_sigma", ".31"
       ],
-      "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
-      "environment": [],
-      "externalConsole": false,
-      "MIMode": "gdb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
-        },
-        {
-          "description": "Break on C++ exceptions",
-          "text": "catch throw",
-          "ignoreFailures": true
-        }
-      ],
-      "preLaunchTask": "build",
-      "miDebuggerPath": "/usr/bin/gdb",
-      "logging": {
-        "engineLogging": false
-      }
+      "preLaunchTask": "build"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "targetName",
+      "type": "pickString",
+      "description": "Which target do you want to build and debug?",
+      "default": "gridsearch_eurusd_test_best_bench",
+      "options": [
+        "gridsearch_eurusd_test_best_bench",
+        "gridsearch_eurusd_test_best",
+        "gridsearch_test_best",
+        "gridsearch_test_best_bench",
+        "EURUSD_test",
+        "elect_test",
+        "dd_test"
+      ]
     }
   ]
 }
